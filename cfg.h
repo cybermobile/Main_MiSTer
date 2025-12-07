@@ -101,6 +101,10 @@ typedef struct {
 	uint8_t lookahead;
 	char main[1024];
 	char vfilter_interlace_default[1023];
+	// Boxart/frontend settings
+	uint8_t boxart_enable;
+	uint8_t boxart_show_preview;
+	char boxart_path[1024];
 } cfg_t;
 
 extern cfg_t cfg;

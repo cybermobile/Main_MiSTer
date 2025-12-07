@@ -133,6 +133,10 @@ static const ini_var_t ini_vars[] =
 	{ "LOOKAHEAD", (void *)(&(cfg.lookahead)), UINT8, 0, 3 },
 	{ "MAIN", (void*)(&(cfg.main)), STRING, 0, sizeof(cfg.main) - 1 },
 	{"VFILTER_INTERLACE_DEFAULT", (void*)(&(cfg.vfilter_interlace_default)), STRING, 0, sizeof(cfg.vfilter_interlace_default) - 1 },
+	// Boxart/frontend settings
+	{ "BOXART_ENABLE", (void*)(&(cfg.boxart_enable)), UINT8, 0, 1 },
+	{ "BOXART_SHOW_PREVIEW", (void*)(&(cfg.boxart_show_preview)), UINT8, 0, 1 },
+	{ "BOXART_PATH", (void*)(&(cfg.boxart_path)), STRING, 0, sizeof(cfg.boxart_path) - 1 },
 };
 
 static const int nvars = (int)(sizeof(ini_vars) / sizeof(ini_var_t));
@@ -592,6 +596,10 @@ void cfg_parse()
 	cfg.video_hue = 0;
 	strcpy(cfg.video_gain_offset, "1, 0, 1, 0, 1, 0");
 	strcpy(cfg.main, "MiSTer");
+	// Boxart defaults
+	cfg.boxart_enable = 1;
+	cfg.boxart_show_preview = 1;
+	strcpy(cfg.boxart_path, "media");
 	has_video_sections = false;
 	using_video_section = false;
 	cfg_error_count = 0;

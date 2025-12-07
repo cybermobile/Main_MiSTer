@@ -4056,4 +4056,86 @@ int video_get_rotated()
   return current_video_info.rotated;
 }
 
+// Boxart rendering support
+#include "boxart.h"
+
+// Get framebuffer dimensions for external use
+int video_get_fb_width(void)
+{
+	return fb_width;
+}
+
+int video_get_fb_height(void)
+{
+	return fb_height;
+}
+
+// Render boxart image onto the menu framebuffer
+// This should be called after video_menu_bg() sets up the background
+int video_boxart_render(Imlib_Image boxart_img, int x, int y, int max_width, int max_height)
+{
+	if (!boxart_img || max_width <= 0 || max_height <= 0) return 0;
+	if (!fb_base || fb_width <= 0 || fb_height <= 0) return 0;
+
+	// Get current menu background buffer
+	static Imlib_Image bg1 = 0, bg2 = 0;
+	if (!bg1) bg1 = imlib_create_image_using_data(fb_width, fb_height, (uint32_t*)(fb_base + (FB_SIZE * 1)));
+	if (!bg2) bg2 = imlib_create_image_using_data(fb_width, fb_height, (uint32_t*)(fb_base + (FB_SIZE * 2)));
+
+	Imlib_Image *bg = (menu_bgn == 1) ? &bg1 : &bg2;
+	if (!*bg) return 0;
+
+	// Get source image dimensions
+	imlib_context_set_image(boxart_img);
+	int src_w = imlib_image_get_width();
+	int src_h = imlib_image_get_height();
+
+	if (src_w <= 0 || src_h <= 0) return 0;
+
+	// Calculate scaled dimensions maintaining aspect ratio
+	float scale_x = (float)max_width / (float)src_w;
+	float scale_y = (float)max_height / (float)src_h;
+	float scale = (scale_x < scale_y) ? scale_x : scale_y;
+
+	int dst_w = (int)(src_w * scale);
+	int dst_h = (int)(src_h * scale);
+
+	// Center within the max bounds
+	int dst_x = x + (max_width - dst_w) / 2;
+	int dst_y = y + (max_height - dst_h) / 2;
+
+	// Ensure we don't go outside framebuffer bounds
+	if (dst_x < 0) dst_x = 0;
+	if (dst_y < 0) dst_y = 0;
+	if (dst_x + dst_w > fb_width) dst_w = fb_width - dst_x;
+	if (dst_y + dst_h > fb_height) dst_h = fb_height - dst_y;
+
+	// Blend the boxart onto the background
+	imlib_context_set_image(*bg);
+	imlib_context_set_blend(1);  // Enable alpha blending
+	imlib_blend_image_onto_image(boxart_img, 1,
+		0, 0, src_w, src_h,           // source rect
+		dst_x, dst_y, dst_w, dst_h    // dest rect
+	);
+
+	return 1;
+}
+
+// Convenience function to render boxart for currently selected file
+// Position is calculated based on OSD layout
+int video_boxart_render_preview(void)
+{
+	Imlib_Image preview = boxart_get_preview_image();
+	if (!preview) return 0;
+
+	// Position the boxart preview on the right side of the screen
+	// Leave space for OSD on the left
+	int preview_x = fb_width * 2 / 3;  // Start at 2/3 of screen width
+	int preview_y = fb_height / 6;     // Some margin from top
+	int preview_w = fb_width / 3 - 20; // 1/3 of screen width minus margin
+	int preview_h = fb_height * 2 / 3; // 2/3 of screen height
+
+	return video_boxart_render(preview, preview_x, preview_y, preview_w, preview_h);
+}
+
 

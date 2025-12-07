@@ -69,4 +69,10 @@ void video_core_description(char *str, size_t len);
 void video_scaler_description(char *str, size_t len);
 char* video_get_core_mode_name(int with_vrefresh = 1);
 
+// Boxart rendering support
+int video_get_fb_width(void);
+int video_get_fb_height(void);
+int video_boxart_render(void *boxart_img, int x, int y, int max_width, int max_height);
+int video_boxart_render_preview(void);
+
 #endif // VIDEO_H

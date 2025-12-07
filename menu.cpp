@@ -64,6 +64,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "bootcore.h"
 #include "ide.h"
 #include "profiling.h"
+#include "boxart.h"
 
 /*menu states*/
 enum MENU
@@ -5045,6 +5046,22 @@ void HandleUI(void)
 		OsdSetTitle((fs_Options & SCANO_CORES) ? "Cores" : "Select", 0);
 		PrintDirectory(hold_cnt<2);
 		menustate = MENU_FILE_SELECT2;
+
+		// Load boxart preview for currently selected file
+		if (cfg.boxart_enable && cfg.boxart_show_preview && flist_nDirEntries())
+		{
+			direntext_t *item = flist_SelectedItem();
+			if (item && item->de.d_type != DT_DIR)
+			{
+				boxart_set_preview(item->altname);
+				video_boxart_render_preview();
+			}
+			else
+			{
+				boxart_clear_preview();
+			}
+		}
+
 		if (cfg.log_file_entry && flist_nDirEntries())
 		{
 			//Write out paths infos for external integration
