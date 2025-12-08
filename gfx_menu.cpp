@@ -1341,3 +1341,332 @@ void gfx_draw_text(Imlib_Image img, const char *text, int x, int y, gfx_color_t 
 	set_imlib_color(color);
 	imlib_image_fill_rectangle(text_rect.x, text_rect.y, text_rect.w, text_rect.h);
 }
+
+//// Core Settings Menu Rendering ////
+
+#include "core_settings.h"
+
+// Render the unified core settings menu
+void gfx_menu_render_settings(void)
+{
+	if (!core_settings_is_loaded()) return;
+
+	settings_menu_state_t *state = core_settings_get_menu_state();
+	if (!state || !state->profile) return;
+
+	gfx_theme_t *theme = menu_state.theme;
+
+	// Create canvas from framebuffer
+	Imlib_Image canvas = imlib_create_image_using_data(fb_width, fb_height,
+		(uint32_t*)(fb_base + (1920*1080 * 1)));
+	if (!canvas) return;
+
+	imlib_context_set_image(canvas);
+	imlib_image_set_has_alpha(1);
+
+	// Semi-transparent overlay
+	gfx_rect_t overlay = { 0, 0, fb_width, fb_height };
+	gfx_color_t overlay_color = gfx_color_hex(0xE0101020);
+	draw_filled_rect(canvas, overlay, overlay_color);
+
+	// Settings panel
+	int panel_width = 700;
+	int panel_height = fb_height - 120;
+	int panel_x = (fb_width - panel_width) / 2;
+	int panel_y = 60;
+
+	gfx_rect_t panel = { panel_x, panel_y, panel_width, panel_height };
+	draw_filled_rect(canvas, panel, theme->colors.panel_bg);
+	draw_rect_border(canvas, panel, theme->colors.panel_border, 2);
+
+	// Core name header
+	core_profile_t *profile = state->profile;
+	gfx_rect_t header = { panel_x, panel_y, panel_width, 50 };
+	gfx_color_t header_bg = theme->colors.panel_border;
+	draw_filled_rect(canvas, header, header_bg);
+
+	// Core name text placeholder
+	int name_width = strlen(profile->core_name) * 10;
+	if (name_width > panel_width - 40) name_width = panel_width - 40;
+	gfx_rect_t core_name = { panel_x + 20, panel_y + 15, name_width, 20 };
+	draw_filled_rect(canvas, core_name, theme->colors.text_primary);
+
+	// Category tabs
+	int tabs_y = panel_y + 60;
+	gfx_menu_render_settings_category_tabs(panel_x, tabs_y, panel_width);
+
+	// Settings list area
+	int list_y = tabs_y + 50;
+	int list_height = panel_height - 130;
+	gfx_menu_render_settings_list(panel_x + 10, list_y, panel_width - 20, list_height);
+
+	// Footer with controls hint
+	int footer_y = panel_y + panel_height - 40;
+	gfx_rect_t footer = { panel_x, footer_y, panel_width, 40 };
+	gfx_color_t footer_bg = theme->colors.panel_border;
+	footer_bg.a = 150;
+	draw_filled_rect(canvas, footer, footer_bg);
+
+	// Controls hint placeholder
+	gfx_rect_t hint = { panel_x + 20, footer_y + 12, 300, 16 };
+	draw_filled_rect(canvas, hint, theme->colors.text_secondary);
+}
+
+// Render category tabs at top of settings menu
+void gfx_menu_render_settings_category_tabs(int x, int y, int width)
+{
+	settings_menu_state_t *state = core_settings_get_menu_state();
+	gfx_theme_t *theme = menu_state.theme;
+
+	Imlib_Image canvas = imlib_context_get_image();
+
+	int tab_width = width / SETTING_CAT_COUNT;
+	int tab_height = 40;
+
+	for (int i = 0; i < SETTING_CAT_COUNT; i++)
+	{
+		gfx_rect_t tab = { x + i * tab_width, y, tab_width - 2, tab_height };
+
+		// Highlight current category
+		if ((int)state->current_category == i)
+		{
+			draw_filled_rect(canvas, tab, theme->colors.selection_bg);
+			gfx_rect_t indicator = { tab.x, y + tab_height - 3, tab.w, 3 };
+			draw_filled_rect(canvas, indicator, theme->colors.selection_border);
+		}
+		else
+		{
+			gfx_color_t tab_bg = theme->colors.panel_bg;
+			tab_bg.a = 100;
+			draw_filled_rect(canvas, tab, tab_bg);
+		}
+
+		// Category name placeholder
+		const char *cat_name = core_settings_category_name((setting_category_t)i);
+		int name_width = strlen(cat_name) * 7;
+		gfx_rect_t name_rect = { tab.x + (tab.w - name_width) / 2, y + 12, name_width, 14 };
+		gfx_color_t text_col = ((int)state->current_category == i) ?
+		                        theme->colors.text_highlight : theme->colors.text_secondary;
+		draw_filled_rect(canvas, name_rect, text_col);
+	}
+}
+
+// Render settings list for current category
+void gfx_menu_render_settings_list(int x, int y, int width, int height)
+{
+	settings_menu_state_t *state = core_settings_get_menu_state();
+	gfx_theme_t *theme = menu_state.theme;
+
+	Imlib_Image canvas = imlib_context_get_image();
+
+	// Settings list background
+	gfx_rect_t list_bg = { x, y, width, height };
+	gfx_color_t bg = gfx_color_hex(0x40000000);
+	draw_filled_rect(canvas, list_bg, bg);
+
+	// Calculate visible items
+	int item_height = 44;
+	state->visible_count = height / item_height;
+
+	// Collect settings for current category
+	core_setting_t *cat_settings[CORE_SETTINGS_MAX];
+	int cat_count = core_settings_get_by_category(state->current_category,
+	                                               cat_settings, CORE_SETTINGS_MAX);
+
+	// Calculate scroll offset
+	int selected_in_cat = 0;
+	for (int i = 0; i < cat_count; i++)
+	{
+		if (cat_settings[i] == core_settings_get_by_index(state->selected_index))
+		{
+			selected_in_cat = i;
+			break;
+		}
+	}
+
+	int scroll_offset = 0;
+	if (selected_in_cat >= state->visible_count)
+	{
+		scroll_offset = selected_in_cat - state->visible_count + 1;
+	}
+
+	// Render settings
+	int render_y = y + 4;
+	for (int i = scroll_offset; i < cat_count && (i - scroll_offset) < state->visible_count; i++)
+	{
+		int selected = (cat_settings[i] == core_settings_get_by_index(state->selected_index));
+		gfx_menu_render_setting_item(x + 8, render_y, width - 16, cat_settings[i], selected);
+		render_y += item_height;
+	}
+
+	// Scrollbar (if needed)
+	if (cat_count > state->visible_count)
+	{
+		float visible_ratio = (float)state->visible_count / (float)cat_count;
+		int thumb_height = (int)(height * visible_ratio);
+		if (thumb_height < 30) thumb_height = 30;
+
+		float scroll_ratio = (float)scroll_offset / (float)(cat_count - state->visible_count);
+		int thumb_y = y + (int)((height - thumb_height) * scroll_ratio);
+
+		gfx_rect_t sb_bg = { x + width - 8, y, 6, height };
+		draw_filled_rect(canvas, sb_bg, theme->colors.scrollbar_bg);
+
+		gfx_rect_t thumb = { x + width - 7, thumb_y, 4, thumb_height };
+		draw_filled_rect(canvas, thumb, theme->colors.scrollbar_fg);
+	}
+}
+
+// Render individual setting item
+void gfx_menu_render_setting_item(int x, int y, int width, void *setting_ptr, int selected)
+{
+	core_setting_t *setting = (core_setting_t*)setting_ptr;
+	if (!setting) return;
+
+	gfx_theme_t *theme = menu_state.theme;
+	Imlib_Image canvas = imlib_context_get_image();
+
+	gfx_rect_t item_rect = { x, y, width, 40 };
+
+	// Handle separators
+	if (setting->type == SETTING_TYPE_SEPARATOR)
+	{
+		// Separator bar
+		gfx_rect_t sep_bar = { x + 10, y + 18, width - 20, 2 };
+		gfx_color_t sep_color = theme->colors.panel_border;
+		draw_filled_rect(canvas, sep_bar, sep_color);
+
+		// Separator label
+		int label_width = strlen(setting->name) * 7;
+		gfx_rect_t label_bg = { x + 20, y + 8, label_width + 20, 20 };
+		draw_filled_rect(canvas, label_bg, theme->colors.panel_bg);
+
+		gfx_rect_t label = { x + 30, y + 12, label_width, 12 };
+		draw_filled_rect(canvas, label, theme->colors.text_secondary);
+		return;
+	}
+
+	// Selection highlight
+	if (selected)
+	{
+		draw_filled_rect(canvas, item_rect, theme->colors.selection_bg);
+		draw_rect_border(canvas, item_rect, theme->colors.selection_border, 2);
+	}
+
+	// Setting name
+	int name_width = strlen(setting->name) * 8;
+	if (name_width > width / 2 - 20) name_width = width / 2 - 20;
+	gfx_rect_t name_rect = { x + 12, y + 12, name_width, 16 };
+	gfx_color_t text_col = selected ? theme->colors.text_highlight : theme->colors.text_primary;
+	draw_filled_rect(canvas, name_rect, text_col);
+
+	// Value display (right side)
+	int value_x = x + width - 200;
+	int value_y = y + 10;
+
+	switch (setting->type)
+	{
+		case SETTING_TYPE_TOGGLE:
+		{
+			// Toggle switch
+			gfx_rect_t switch_bg = { value_x + 120, value_y, 50, 24 };
+			gfx_color_t switch_color = setting->value ?
+			                           theme->colors.selection_border :
+			                           theme->colors.panel_border;
+			draw_filled_rect(canvas, switch_bg, switch_color);
+
+			// Toggle knob
+			int knob_x = setting->value ? value_x + 146 : value_x + 122;
+			gfx_rect_t knob = { knob_x, value_y + 2, 20, 20 };
+			draw_filled_rect(canvas, knob, theme->colors.text_primary);
+
+			// On/Off text
+			const char *val_str = setting->value ? "On" : "Off";
+			int val_width = strlen(val_str) * 8;
+			gfx_rect_t val_text = { value_x + 90 - val_width, value_y + 4, val_width, 14 };
+			draw_filled_rect(canvas, val_text, theme->colors.text_secondary);
+			break;
+		}
+
+		case SETTING_TYPE_CHOICE:
+		{
+			// Choice dropdown indicator
+			gfx_rect_t choice_bg = { value_x, value_y, 170, 24 };
+			gfx_color_t choice_color = theme->colors.panel_border;
+			draw_filled_rect(canvas, choice_bg, choice_color);
+
+			// Current option name
+			const char *opt_name = core_settings_get_option_name(setting);
+			if (opt_name)
+			{
+				int opt_width = strlen(opt_name) * 7;
+				if (opt_width > 140) opt_width = 140;
+				gfx_rect_t opt_text = { value_x + 8, value_y + 5, opt_width, 14 };
+				draw_filled_rect(canvas, opt_text, theme->colors.text_primary);
+			}
+
+			// Arrow indicators
+			gfx_rect_t left_arrow = { value_x - 20, value_y + 6, 12, 12 };
+			gfx_rect_t right_arrow = { value_x + 175, value_y + 6, 12, 12 };
+			draw_filled_rect(canvas, left_arrow, theme->colors.text_secondary);
+			draw_filled_rect(canvas, right_arrow, theme->colors.text_secondary);
+			break;
+		}
+
+		case SETTING_TYPE_RANGE:
+		{
+			// Progress bar background
+			gfx_rect_t bar_bg = { value_x, value_y + 8, 120, 8 };
+			gfx_color_t bar_color = theme->colors.panel_border;
+			draw_filled_rect(canvas, bar_bg, bar_color);
+
+			// Progress bar fill
+			float progress = (float)(setting->value - setting->min_value) /
+			                 (float)(setting->max_value - setting->min_value);
+			int fill_width = (int)(118 * progress);
+			gfx_rect_t bar_fill = { value_x + 1, value_y + 9, fill_width, 6 };
+			draw_filled_rect(canvas, bar_fill, theme->colors.selection_border);
+
+			// Value text
+			char val_str[32];
+			core_settings_format_value(setting, val_str, sizeof(val_str));
+			int val_width = strlen(val_str) * 7;
+			gfx_rect_t val_text = { value_x + 130, value_y + 4, val_width, 14 };
+			draw_filled_rect(canvas, val_text, theme->colors.text_primary);
+			break;
+		}
+
+		case SETTING_TYPE_ACTION:
+		{
+			// Action button
+			gfx_rect_t button = { value_x + 60, value_y, 110, 24 };
+			draw_filled_rect(canvas, button, theme->colors.panel_border);
+			if (selected)
+			{
+				draw_rect_border(canvas, button, theme->colors.selection_border, 2);
+			}
+
+			// Button text placeholder
+			gfx_rect_t btn_text = { button.x + 20, button.y + 5, 70, 14 };
+			draw_filled_rect(canvas, btn_text, theme->colors.text_primary);
+			break;
+		}
+
+		default:
+			break;
+	}
+
+	// Readonly indicator
+	if (setting->readonly)
+	{
+		gfx_rect_t lock = { x + width - 220, y + 14, 12, 12 };
+		draw_filled_rect(canvas, lock, theme->colors.text_secondary);
+	}
+
+	// Requires restart indicator
+	if (setting->requires_restart)
+	{
+		gfx_rect_t restart = { x + width - 235, y + 14, 8, 8 };
+		draw_filled_rect(canvas, restart, theme->colors.text_highlight);
+	}
+}

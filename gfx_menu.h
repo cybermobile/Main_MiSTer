@@ -160,4 +160,10 @@ gfx_color_t gfx_color_hex(uint32_t hex);
 void gfx_draw_rounded_rect(Imlib_Image img, gfx_rect_t rect, int radius, gfx_color_t color);
 void gfx_draw_text(Imlib_Image img, const char *text, int x, int y, gfx_color_t color);
 
+// Core Settings Menu Rendering
+void gfx_menu_render_settings(void);
+void gfx_menu_render_settings_category_tabs(int x, int y, int width);
+void gfx_menu_render_settings_list(int x, int y, int width, int height);
+void gfx_menu_render_setting_item(int x, int y, int width, void *setting, int selected);
+
 #endif // __GFX_MENU_H__
