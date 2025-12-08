@@ -14,6 +14,7 @@
 #include "file_io.h"
 #include "hardware.h"
 #include "animator.h"
+#include "search.h"
 
 // Maximum items in menu
 #define GFX_MAX_ITEMS 1024
@@ -56,6 +57,8 @@ extern int fb_height;
 // Forward declarations
 static void render_list_view(Imlib_Image canvas);
 static void render_grid_view(Imlib_Image canvas);
+static void render_wheel_view(Imlib_Image canvas);
+static void render_search_overlay(Imlib_Image canvas);
 static void render_header(Imlib_Image canvas);
 static void render_footer(Imlib_Image canvas);
 static void render_preview_panel(Imlib_Image canvas);
@@ -890,6 +893,319 @@ static void render_grid_view(Imlib_Image canvas)
 	}
 }
 
+// Render wheel/carousel view
+static void render_wheel_view(Imlib_Image canvas)
+{
+	gfx_theme_t *theme = menu_state.theme;
+
+	// Wheel parameters
+	int center_x = fb_width / 2;
+	int center_y = fb_height / 2 - 40;  // Slightly above center
+	int wheel_radius = 300;             // Distance from center to items
+	int item_size_center = 200;         // Size of center (selected) item
+	int item_size_side = 120;           // Size of side items
+	int visible_items = 7;              // Number of visible items in wheel
+
+	// Calculate positions for wheel items
+	int half_visible = visible_items / 2;
+
+	for (int offset = -half_visible; offset <= half_visible; offset++)
+	{
+		int item_idx = menu_state.selected_index + offset;
+
+		// Wrap around
+		if (item_idx < 0) item_idx += menu_state.item_count;
+		if (item_idx >= menu_state.item_count) item_idx -= menu_state.item_count;
+
+		if (menu_state.item_count == 0) break;
+		if (item_idx < 0 || item_idx >= menu_state.item_count) continue;
+
+		gfx_menu_item_t *item = &items_storage[item_idx];
+
+		// Calculate position on wheel arc
+		float angle = (float)offset * 0.35f;  // Spread angle
+		float cos_a = cosf(angle);
+		float sin_a = sinf(angle);
+
+		// Position (arc layout)
+		int x = center_x + (int)(sin_a * wheel_radius);
+		int y = center_y + (int)((1.0f - cos_a) * wheel_radius * 0.3f);
+
+		// Size based on distance from center
+		float scale = 1.0f - fabsf((float)offset) * 0.15f;
+		if (scale < 0.5f) scale = 0.5f;
+
+		int item_size = (offset == 0) ? item_size_center : (int)(item_size_side * scale);
+		if (offset == 0)
+		{
+			// Apply selection animation scale
+			item_size = (int)(item_size * anim_selection_scale);
+		}
+
+		// Adjust position for item size
+		x -= item_size / 2;
+		y -= item_size / 2;
+
+		// Alpha based on distance from center
+		uint8_t alpha = 255;
+		if (offset != 0)
+		{
+			alpha = (uint8_t)(255 * (1.0f - fabsf((float)offset) * 0.2f));
+		}
+
+		gfx_rect_t item_rect = { x, y, item_size, item_size };
+
+		// Selection glow for center item
+		if (offset == 0)
+		{
+			// Outer glow
+			gfx_rect_t glow_rect = { x - 8, y - 8, item_size + 16, item_size + 16 };
+			gfx_color_t glow = theme->colors.selection_border;
+			glow.a = 100;
+			draw_filled_rect(canvas, glow_rect, glow);
+
+			// Selection border
+			draw_rect_border(canvas, glow_rect, theme->colors.selection_border, 3);
+		}
+
+		// Item background
+		gfx_color_t bg = theme->colors.panel_bg;
+		bg.a = alpha;
+		draw_filled_rect(canvas, item_rect, bg);
+
+		// Thumbnail
+		if (item->thumbnail)
+		{
+			imlib_context_set_image(canvas);
+			imlib_context_set_blend(1);
+			imlib_blend_image_onto_image(item->thumbnail, 1,
+				0, 0, item_size, item_size,
+				item_rect.x, item_rect.y, item_rect.w, item_rect.h - 20);
+		}
+
+		// Name bar at bottom
+		gfx_rect_t name_bar = { item_rect.x, item_rect.y + item_rect.h - 20,
+		                        item_rect.w, 20 };
+		gfx_color_t name_bg = theme->colors.panel_border;
+		name_bg.a = (uint8_t)(200 * alpha / 255);
+		draw_filled_rect(canvas, name_bar, name_bg);
+
+		// Draw name text indicator
+		if (offset == 0)
+		{
+			gfx_rect_t text_bar = { name_bar.x + 4, name_bar.y + 4,
+			                        name_bar.w - 8, 12 };
+			draw_filled_rect(canvas, text_bar, theme->colors.text_primary);
+		}
+	}
+
+	// Title of selected item at bottom
+	gfx_menu_item_t *selected = gfx_menu_get_selected_item();
+	if (selected)
+	{
+		int title_y = center_y + wheel_radius / 2 + 100;
+		gfx_rect_t title_area = { center_x - 200, title_y, 400, 30 };
+		gfx_color_t title_bg = theme->colors.panel_bg;
+		title_bg.a = 200;
+		draw_filled_rect(canvas, title_area, title_bg);
+
+		// Title text placeholder
+		int text_width = strlen(selected->name) * 8;
+		if (text_width > 380) text_width = 380;
+		gfx_rect_t title_text = { center_x - text_width/2, title_y + 8, text_width, 16 };
+		draw_filled_rect(canvas, title_text, theme->colors.text_highlight);
+	}
+
+	// Update visible count for page navigation
+	menu_state.visible_count = visible_items;
+}
+
+// Render search overlay
+static void render_search_overlay(Imlib_Image canvas)
+{
+	if (!search_is_active()) return;
+
+	gfx_theme_t *theme = menu_state.theme;
+
+	// Semi-transparent overlay
+	gfx_rect_t overlay = { 0, 0, fb_width, fb_height };
+	gfx_color_t overlay_color = gfx_color_hex(0xD0000000);
+	draw_filled_rect(canvas, overlay, overlay_color);
+
+	// Search box area
+	int box_width = 600;
+	int box_height = 400;
+	int box_x = (fb_width - box_width) / 2;
+	int box_y = (fb_height - box_height) / 2 - 50;
+
+	gfx_rect_t search_box = { box_x, box_y, box_width, box_height };
+	draw_filled_rect(canvas, search_box, theme->colors.panel_bg);
+	draw_rect_border(canvas, search_box, theme->colors.panel_border, 2);
+
+	// Search title bar
+	gfx_rect_t title_bar = { box_x, box_y, box_width, 40 };
+	gfx_color_t title_bg = theme->colors.panel_border;
+	draw_filled_rect(canvas, title_bar, title_bg);
+
+	// "Search" title placeholder
+	gfx_rect_t title_text = { box_x + 20, box_y + 12, 80, 16 };
+	draw_filled_rect(canvas, title_text, theme->colors.text_primary);
+
+	// Query input field
+	int input_y = box_y + 60;
+	gfx_rect_t input_bg = { box_x + 20, input_y, box_width - 40, 36 };
+	gfx_color_t input_color = gfx_color_hex(0xFF1a1a1a);
+	draw_filled_rect(canvas, input_bg, input_color);
+	draw_rect_border(canvas, input_bg, theme->colors.selection_border, 2);
+
+	// Query text placeholder
+	const char *query = search_get_query();
+	if (query && query[0])
+	{
+		int query_width = strlen(query) * 10;
+		if (query_width > box_width - 60) query_width = box_width - 60;
+		gfx_rect_t query_text = { box_x + 30, input_y + 10, query_width, 16 };
+		draw_filled_rect(canvas, query_text, theme->colors.text_primary);
+	}
+
+	// Blinking cursor
+	static int cursor_blink = 0;
+	cursor_blink = (cursor_blink + 1) % 60;
+	if (cursor_blink < 30)
+	{
+		int cursor_x = box_x + 30 + (query ? strlen(query) * 10 : 0);
+		gfx_rect_t cursor = { cursor_x, input_y + 8, 2, 20 };
+		draw_filled_rect(canvas, cursor, theme->colors.text_highlight);
+	}
+
+	// Results area
+	int results_y = input_y + 50;
+	int results_height = box_height - 130;
+	gfx_rect_t results_area = { box_x + 20, results_y, box_width - 40, results_height };
+	gfx_color_t results_bg = gfx_color_hex(0x40000000);
+	draw_filled_rect(canvas, results_area, results_bg);
+
+	// Render search results
+	int result_count = 0;
+	search_result_t *results = search_get_results(&result_count);
+	int max_visible = results_height / 32;
+	int selected_idx = 0;
+	search_result_t *selected = search_get_selected();
+
+	// Find selected index
+	for (int i = 0; i < result_count; i++)
+	{
+		if (&results[i] == selected)
+		{
+			selected_idx = i;
+			break;
+		}
+	}
+
+	// Calculate scroll offset for results
+	int scroll_start = 0;
+	if (selected_idx >= max_visible)
+	{
+		scroll_start = selected_idx - max_visible + 1;
+	}
+
+	int y = results_y + 4;
+	for (int i = scroll_start; i < result_count && (i - scroll_start) < max_visible; i++)
+	{
+		gfx_rect_t result_rect = { box_x + 24, y, box_width - 48, 28 };
+
+		// Highlight selected
+		if (&results[i] == selected)
+		{
+			draw_filled_rect(canvas, result_rect, theme->colors.selection_bg);
+			draw_rect_border(canvas, result_rect, theme->colors.selection_border, 1);
+		}
+
+		// Result name placeholder
+		int name_width = strlen(results[i].name) * 7;
+		if (name_width > result_rect.w - 20) name_width = result_rect.w - 20;
+		gfx_rect_t name_text = { result_rect.x + 8, result_rect.y + 8, name_width, 12 };
+		gfx_color_t text_col = (&results[i] == selected) ?
+		                        theme->colors.text_highlight : theme->colors.text_primary;
+		draw_filled_rect(canvas, name_text, text_col);
+
+		y += 32;
+	}
+
+	// Result count indicator
+	char count_str[32];
+	snprintf(count_str, sizeof(count_str), "%d results", result_count);
+	int count_width = strlen(count_str) * 7;
+	gfx_rect_t count_text = { box_x + box_width - count_width - 30,
+	                          box_y + box_height - 30, count_width, 14 };
+	draw_filled_rect(canvas, count_text, theme->colors.text_secondary);
+
+	// Virtual keyboard (if visible)
+	if (search_keyboard_visible())
+	{
+		int kb_y = box_y + box_height + 20;
+		int kb_width = 500;
+		int kb_x = (fb_width - kb_width) / 2;
+		int key_size = 40;
+		int key_spacing = 8;
+
+		gfx_rect_t kb_bg = { kb_x - 10, kb_y - 10, kb_width + 20, 200 };
+		draw_filled_rect(canvas, kb_bg, theme->colors.panel_bg);
+		draw_rect_border(canvas, kb_bg, theme->colors.panel_border, 2);
+
+		search_keyboard_t *kb = search_get_keyboard();
+
+		// Render keyboard rows
+		const char* rows[] = { "1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM" };
+		int row_offsets[] = { 0, 20, 40, 70 };  // X offsets for each row
+
+		for (int row = 0; row < 4; row++)
+		{
+			int row_len = strlen(rows[row]);
+			int rx = kb_x + row_offsets[row];
+			int ry = kb_y + row * (key_size + key_spacing);
+
+			for (int col = 0; col < row_len; col++)
+			{
+				gfx_rect_t key = { rx + col * (key_size + key_spacing), ry,
+				                   key_size, key_size };
+
+				// Highlight current key
+				if (row == kb->cursor_y && col == kb->cursor_x)
+				{
+					draw_filled_rect(canvas, key, theme->colors.selection_bg);
+					draw_rect_border(canvas, key, theme->colors.selection_border, 2);
+				}
+				else
+				{
+					gfx_color_t key_bg = gfx_color_hex(0xFF2a2a2a);
+					draw_filled_rect(canvas, key, key_bg);
+				}
+
+				// Key label placeholder
+				gfx_rect_t label = { key.x + key.w/2 - 5, key.y + key.h/2 - 6, 10, 12 };
+				draw_filled_rect(canvas, label, theme->colors.text_primary);
+			}
+		}
+
+		// Special keys (Space, Backspace, Enter)
+		int special_y = kb_y + 4 * (key_size + key_spacing);
+
+		// Space bar
+		gfx_rect_t space_key = { kb_x + 100, special_y, 200, key_size };
+		gfx_color_t key_bg = gfx_color_hex(0xFF2a2a2a);
+		draw_filled_rect(canvas, space_key, key_bg);
+
+		// Backspace
+		gfx_rect_t back_key = { kb_x + 320, special_y, 80, key_size };
+		draw_filled_rect(canvas, back_key, key_bg);
+
+		// Enter/Search
+		gfx_rect_t enter_key = { kb_x + 410, special_y, 80, key_size };
+		draw_filled_rect(canvas, enter_key, theme->colors.selection_bg);
+	}
+}
+
 // Main render function
 void gfx_menu_render(void)
 {
@@ -929,8 +1245,7 @@ void gfx_menu_render(void)
 			render_grid_view(canvas);
 			break;
 		case GFX_VIEW_WHEEL:
-			// TODO: Implement wheel view
-			render_list_view(canvas);
+			render_wheel_view(canvas);
 			break;
 		default:
 			render_list_view(canvas);
@@ -939,6 +1254,9 @@ void gfx_menu_render(void)
 
 	render_header(canvas);
 	render_footer(canvas);
+
+	// Render search overlay on top of everything
+	render_search_overlay(canvas);
 
 	menu_state.needs_redraw = 0;
 }
