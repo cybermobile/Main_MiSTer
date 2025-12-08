@@ -13,6 +13,7 @@
 #include "boxart.h"
 #include "file_io.h"
 #include "hardware.h"
+#include "animator.h"
 
 // Maximum items in menu
 #define GFX_MAX_ITEMS 1024
@@ -27,6 +28,8 @@
 // Animation constants
 #define SCROLL_SMOOTH_FACTOR 0.15f
 #define SELECTION_ANIM_SPEED 8.0f
+#define SCROLL_ANIM_DURATION 0.25f
+#define SELECT_ANIM_DURATION 0.15f
 
 // Global state
 static gfx_menu_state_t menu_state;
@@ -34,6 +37,16 @@ static gfx_theme_t default_theme;
 static gfx_menu_item_t items_storage[GFX_MAX_ITEMS];
 static gfx_animation_t scroll_anim;
 static gfx_animation_t selection_anim;
+
+// Animation state for smooth scrolling and selection
+static float anim_scroll_offset = 0.0f;
+static float anim_selection_y = 0.0f;
+static float anim_selection_scale = 1.0f;
+static float anim_preview_opacity = 1.0f;
+static uint32_t scroll_anim_id = 0;
+static uint32_t selection_anim_id = 0;
+static uint32_t preview_fade_id = 0;
+static uint32_t selection_pulse_id = 0;
 
 // Framebuffer access
 extern volatile uint32_t *fb_base;
@@ -120,6 +133,16 @@ void gfx_menu_init(void)
 	menu_state.view_type = GFX_VIEW_LIST;
 	menu_state.enabled = 0;  // Disabled by default, use classic OSD
 	menu_state.needs_redraw = 1;
+
+	// Initialize animation state
+	anim_scroll_offset = 0.0f;
+	anim_selection_y = 0.0f;
+	anim_selection_scale = 1.0f;
+	anim_preview_opacity = 1.0f;
+	scroll_anim_id = 0;
+	selection_anim_id = 0;
+	preview_fade_id = 0;
+	selection_pulse_id = 0;
 
 	init_default_theme();
 	menu_state.theme = &default_theme;
@@ -284,37 +307,81 @@ void gfx_menu_select_next(void)
 {
 	if (menu_state.item_count == 0) return;
 
-	selection_anim.from_index = menu_state.selected_index;
+	int prev_index = menu_state.selected_index;
 	menu_state.selected_index++;
 	if (menu_state.selected_index >= menu_state.item_count)
 	{
 		menu_state.selected_index = 0;  // Wrap around
 	}
-	selection_anim.to_index = menu_state.selected_index;
-	selection_anim.active = 1;
-	selection_anim.progress = 0;
+
+	// Cancel any existing selection animation
+	if (selection_anim_id && anim_is_running(selection_anim_id))
+	{
+		anim_cancel(selection_anim_id);
+	}
+
+	// Animate selection scale (subtle pop effect)
+	anim_selection_scale = 0.95f;
+	selection_anim_id = anim_create_to(&anim_selection_scale, 1.0f,
+	                                   SELECT_ANIM_DURATION, EASE_OUT_BACK);
+	if (selection_anim_id)
+	{
+		anim_start(selection_anim_id);
+	}
+
+	// Fade preview panel for new selection
+	if (preview_fade_id && anim_is_running(preview_fade_id))
+	{
+		anim_cancel(preview_fade_id);
+	}
+	anim_preview_opacity = 0.7f;
+	preview_fade_id = anim_fade_in(&anim_preview_opacity, 0.2f);
 
 	// Update scroll to keep selection visible
 	gfx_menu_scroll_to(menu_state.selected_index);
 	menu_state.needs_redraw = 1;
+
+	(void)prev_index;  // Mark as used
 }
 
 void gfx_menu_select_prev(void)
 {
 	if (menu_state.item_count == 0) return;
 
-	selection_anim.from_index = menu_state.selected_index;
+	int prev_index = menu_state.selected_index;
 	menu_state.selected_index--;
 	if (menu_state.selected_index < 0)
 	{
 		menu_state.selected_index = menu_state.item_count - 1;  // Wrap around
 	}
-	selection_anim.to_index = menu_state.selected_index;
-	selection_anim.active = 1;
-	selection_anim.progress = 0;
+
+	// Cancel any existing selection animation
+	if (selection_anim_id && anim_is_running(selection_anim_id))
+	{
+		anim_cancel(selection_anim_id);
+	}
+
+	// Animate selection scale (subtle pop effect)
+	anim_selection_scale = 0.95f;
+	selection_anim_id = anim_create_to(&anim_selection_scale, 1.0f,
+	                                   SELECT_ANIM_DURATION, EASE_OUT_BACK);
+	if (selection_anim_id)
+	{
+		anim_start(selection_anim_id);
+	}
+
+	// Fade preview panel for new selection
+	if (preview_fade_id && anim_is_running(preview_fade_id))
+	{
+		anim_cancel(preview_fade_id);
+	}
+	anim_preview_opacity = 0.7f;
+	preview_fade_id = anim_fade_in(&anim_preview_opacity, 0.2f);
 
 	gfx_menu_scroll_to(menu_state.selected_index);
 	menu_state.needs_redraw = 1;
+
+	(void)prev_index;  // Mark as used
 }
 
 void gfx_menu_select_index(int index)
@@ -365,12 +432,21 @@ void gfx_menu_scroll_to(int index)
 	if (target_offset > max_offset) target_offset = max_offset;
 	if (max_offset < 0) target_offset = 0;
 
-	// Start scroll animation
-	scroll_anim.from_index = menu_state.scroll_offset;
-	scroll_anim.to_index = target_offset;
-	scroll_anim.active = 1;
-	scroll_anim.progress = 0;
+	// Cancel any existing scroll animation
+	if (scroll_anim_id && anim_is_running(scroll_anim_id))
+	{
+		anim_cancel(scroll_anim_id);
+	}
 
+	// Create smooth scroll animation using animator system
+	scroll_anim_id = anim_create_to(&anim_scroll_offset, (float)target_offset,
+	                                SCROLL_ANIM_DURATION, EASE_OUT_CUBIC);
+	if (scroll_anim_id)
+	{
+		anim_start(scroll_anim_id);
+	}
+
+	// Also update immediate value for logic
 	menu_state.scroll_offset = target_offset;
 }
 
@@ -420,27 +496,33 @@ int gfx_menu_needs_redraw(void)
 
 void gfx_menu_update_animations(float delta_time)
 {
-	// Update scroll animation
-	if (scroll_anim.active)
+	(void)delta_time;  // Not needed - anim_update called from main loop
+
+	// Check if any animations are active and request redraw
+	int animations_active = 0;
+
+	if (scroll_anim_id && anim_is_running(scroll_anim_id))
 	{
-		scroll_anim.progress += delta_time * SELECTION_ANIM_SPEED;
-		if (scroll_anim.progress >= 1.0f)
-		{
-			scroll_anim.progress = 1.0f;
-			scroll_anim.active = 0;
-		}
-		menu_state.needs_redraw = 1;
+		animations_active = 1;
 	}
 
-	// Update selection animation
-	if (selection_anim.active)
+	if (selection_anim_id && anim_is_running(selection_anim_id))
 	{
-		selection_anim.progress += delta_time * SELECTION_ANIM_SPEED;
-		if (selection_anim.progress >= 1.0f)
-		{
-			selection_anim.progress = 1.0f;
-			selection_anim.active = 0;
-		}
+		animations_active = 1;
+	}
+
+	if (preview_fade_id && anim_is_running(preview_fade_id))
+	{
+		animations_active = 1;
+	}
+
+	if (selection_pulse_id && anim_is_running(selection_pulse_id))
+	{
+		animations_active = 1;
+	}
+
+	if (animations_active)
+	{
 		menu_state.needs_redraw = 1;
 	}
 }
@@ -570,20 +652,42 @@ static void render_list_view(Imlib_Image canvas)
 	int item_height = thumb_size + item_spacing;
 	menu_state.visible_count = list_bounds.h / item_height;
 
-	// Render items
-	int y = list_bounds.y;
-	for (int i = 0; i < menu_state.visible_count && (menu_state.scroll_offset + i) < menu_state.item_count; i++)
+	// Use animated scroll offset for smooth scrolling
+	int display_scroll = (int)anim_scroll_offset;
+	float scroll_frac = anim_scroll_offset - (float)display_scroll;
+	int y_offset = (int)(scroll_frac * item_height);
+
+	// Render items (render one extra for smooth scrolling)
+	int y = list_bounds.y - y_offset;
+	int items_to_render = menu_state.visible_count + 1;
+	for (int i = 0; i < items_to_render && (display_scroll + i) < menu_state.item_count; i++)
 	{
-		int item_idx = menu_state.scroll_offset + i;
+		int item_idx = display_scroll + i;
+		if (item_idx < 0) continue;
 		gfx_menu_item_t *item = &items_storage[item_idx];
 
 		gfx_rect_t item_rect = { list_bounds.x, y, list_bounds.w - SCROLLBAR_WIDTH - 4, thumb_size };
 
-		// Selection highlight
+		// Skip items outside visible bounds
+		if (item_rect.y + item_rect.h < list_bounds.y || item_rect.y > list_bounds.y + list_bounds.h)
+		{
+			y += item_height;
+			continue;
+		}
+
+		// Selection highlight with animated scale
 		if (item_idx == menu_state.selected_index)
 		{
-			draw_filled_rect(canvas, item_rect, theme->colors.selection_bg);
-			draw_rect_border(canvas, item_rect, theme->colors.selection_border, 2);
+			// Apply scale animation to selection box
+			int scale_offset = (int)((1.0f - anim_selection_scale) * item_rect.w * 0.5f);
+			gfx_rect_t sel_rect = {
+				item_rect.x - scale_offset,
+				item_rect.y - (int)((1.0f - anim_selection_scale) * item_rect.h * 0.5f),
+				item_rect.w + scale_offset * 2,
+				item_rect.h + (int)((1.0f - anim_selection_scale) * item_rect.h)
+			};
+			draw_filled_rect(canvas, sel_rect, theme->colors.selection_bg);
+			draw_rect_border(canvas, sel_rect, theme->colors.selection_border, 2);
 		}
 
 		// Thumbnail
@@ -654,10 +758,10 @@ static void render_preview_panel(Imlib_Image canvas)
 		preview_height
 	};
 
-	// Preview panel background
+	// Preview panel background with animated opacity
 	gfx_rect_t panel_bg = { list_width, HEADER_HEIGHT, fb_width - list_width, fb_height - HEADER_HEIGHT - FOOTER_HEIGHT };
 	gfx_color_t bg = theme->colors.panel_bg;
-	bg.a = 180;
+	bg.a = (uint8_t)(180 * anim_preview_opacity);
 	draw_filled_rect(canvas, panel_bg, bg);
 
 	// Get selected item

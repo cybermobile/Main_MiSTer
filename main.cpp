@@ -36,6 +36,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "boxart.h"
 #include "gfx_menu.h"
 #include "gamedb.h"
+#include "animator.h"
+#include <sys/time.h>
 
 const char *version = "$VER:" VDATE;
 
@@ -75,14 +77,29 @@ int main(int argc, char *argv[])
 	boxart_init();
 	gfx_menu_init();
 	gamedb_init();
+	anim_init();
 	user_io_init((argc > 1) ? argv[1] : "",(argc > 2) ? argv[2] : NULL);
 
 #ifdef USE_SCHEDULER
 	scheduler_init();
 	scheduler_run();
 #else
+	// Frame timing for animations
+	struct timeval last_frame_time, current_frame_time;
+	gettimeofday(&last_frame_time, NULL);
+
 	while (1)
 	{
+		// Calculate delta time for animations
+		gettimeofday(&current_frame_time, NULL);
+		float delta_time = (current_frame_time.tv_sec - last_frame_time.tv_sec) +
+		                   (current_frame_time.tv_usec - last_frame_time.tv_usec) / 1000000.0f;
+		last_frame_time = current_frame_time;
+
+		// Update animations
+		anim_update(delta_time);
+		gfx_menu_update_animations(delta_time);
+
 		if (!is_fpga_ready(1))
 		{
 			fpga_wait_to_reset();
