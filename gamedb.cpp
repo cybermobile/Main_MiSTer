@@ -182,7 +182,7 @@ static int parse_nointro_xml(const char *xml_path)
 	XMLDoc doc;
 	XMLDoc_init(&doc);
 
-	if (XMLDoc_parse_file(xml_path, &doc) != 1)
+	if (XMLDoc_parse_file_DOM(xml_path, &doc) != 1)
 	{
 		printf("GameDB: Failed to parse XML: %s\n", xml_path);
 		XMLDoc_free(&doc);
