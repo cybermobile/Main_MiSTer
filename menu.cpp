@@ -65,6 +65,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "ide.h"
 #include "profiling.h"
 #include "boxart.h"
+#include "gamedb.h"
 
 /*menu states*/
 enum MENU
