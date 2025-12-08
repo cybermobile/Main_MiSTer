@@ -137,6 +137,10 @@ static const ini_var_t ini_vars[] =
 	{ "BOXART_ENABLE", (void*)(&(cfg.boxart_enable)), UINT8, 0, 1 },
 	{ "BOXART_SHOW_PREVIEW", (void*)(&(cfg.boxart_show_preview)), UINT8, 0, 1 },
 	{ "BOXART_PATH", (void*)(&(cfg.boxart_path)), STRING, 0, sizeof(cfg.boxart_path) - 1 },
+	// Graphical menu settings
+	{ "GFX_MENU_ENABLE", (void*)(&(cfg.gfx_menu_enable)), UINT8, 0, 1 },
+	{ "GFX_MENU_VIEW", (void*)(&(cfg.gfx_menu_view)), UINT8, 0, 2 },
+	{ "GFX_MENU_THEME", (void*)(&(cfg.gfx_menu_theme)), STRING, 0, sizeof(cfg.gfx_menu_theme) - 1 },
 };
 
 static const int nvars = (int)(sizeof(ini_vars) / sizeof(ini_var_t));
@@ -600,6 +604,10 @@ void cfg_parse()
 	cfg.boxart_enable = 1;
 	cfg.boxart_show_preview = 1;
 	strcpy(cfg.boxart_path, "media");
+	// Graphical menu defaults
+	cfg.gfx_menu_enable = 0;  // Disabled by default, use classic OSD
+	cfg.gfx_menu_view = 0;    // List view
+	strcpy(cfg.gfx_menu_theme, "default");
 	has_video_sections = false;
 	using_video_section = false;
 	cfg_error_count = 0;

@@ -34,6 +34,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "osd.h"
 #include "offload.h"
 #include "boxart.h"
+#include "gfx_menu.h"
 
 const char *version = "$VER:" VDATE;
 
@@ -71,6 +72,7 @@ int main(int argc, char *argv[])
 
 	FindStorage();
 	boxart_init();
+	gfx_menu_init();
 	user_io_init((argc > 1) ? argv[1] : "",(argc > 2) ? argv[2] : NULL);
 
 #ifdef USE_SCHEDULER

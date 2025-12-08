@@ -105,6 +105,10 @@ typedef struct {
 	uint8_t boxart_enable;
 	uint8_t boxart_show_preview;
 	char boxart_path[1024];
+	// Graphical menu settings
+	uint8_t gfx_menu_enable;
+	uint8_t gfx_menu_view;
+	char gfx_menu_theme[256];
 } cfg_t;
 
 extern cfg_t cfg;
