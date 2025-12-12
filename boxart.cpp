@@ -114,6 +114,63 @@ const char* boxart_get_core(void)
 	return boxart_state.core_name;
 }
 
+// Clean game name by removing region codes and version tags
+// "Donkey Kong Country (USA) (Rev 1).zip" -> "Donkey Kong Country"
+static void clean_game_name(const char *input, char *output, size_t output_size)
+{
+	if (!input || !output || output_size == 0) return;
+
+	// Copy input first
+	strncpy(output, input, output_size - 1);
+	output[output_size - 1] = '\0';
+
+	// Remove file extension
+	char *dot = strrchr(output, '.');
+	if (dot) *dot = '\0';
+
+	// Remove parenthetical tags like (USA), (Rev 1), (Europe), etc.
+	// Keep removing until no more are found
+	char *paren;
+	while ((paren = strrchr(output, '(')) != NULL)
+	{
+		// Check if there's a closing paren
+		char *close = strchr(paren, ')');
+		if (close)
+		{
+			// Remove the whole tag including leading spaces
+			while (paren > output && paren[-1] == ' ') paren--;
+			*paren = '\0';
+		}
+		else
+		{
+			break; // No closing paren, stop
+		}
+	}
+
+	// Remove bracket tags like [!], [b], etc.
+	char *bracket;
+	while ((bracket = strrchr(output, '[')) != NULL)
+	{
+		char *close = strchr(bracket, ']');
+		if (close)
+		{
+			while (bracket > output && bracket[-1] == ' ') bracket--;
+			*bracket = '\0';
+		}
+		else
+		{
+			break;
+		}
+	}
+
+	// Trim trailing spaces
+	size_t len = strlen(output);
+	while (len > 0 && output[len - 1] == ' ')
+	{
+		output[--len] = '\0';
+	}
+}
+
 // Normalize a game name for matching (remove extension, special chars)
 static void normalize_game_name(const char *input, char *output, size_t output_size)
 {
@@ -165,27 +222,52 @@ static int file_exists(const char *path)
 const char* boxart_get_path(const char *game_name, artwork_type_t type)
 {
 	static char path_buf[BOXART_PATH_MAX];
+	char clean_name[256];
 	char normalized_name[256];
 
 	if (!game_name || !boxart_state.enabled) return NULL;
 	if (type >= ARTWORK_COUNT) return NULL;
 	if (boxart_state.core_name[0] == '\0') return NULL;
 
-	// Try exact filename first (without extension)
+	// Get base name (without path)
 	const char *base_name = strrchr(game_name, '/');
 	base_name = base_name ? base_name + 1 : game_name;
 
-	// Get name without extension
+	// Get clean name (without region codes, version tags, extension)
+	// e.g., "Donkey Kong Country (USA) (Rev 1).zip" -> "Donkey Kong Country"
+	clean_game_name(base_name, clean_name, sizeof(clean_name));
+
+	// Get name without extension only
 	char name_no_ext[256];
 	strncpy(name_no_ext, base_name, sizeof(name_no_ext) - 1);
 	name_no_ext[sizeof(name_no_ext) - 1] = '\0';
 	char *dot = strrchr(name_no_ext, '.');
 	if (dot) *dot = '\0';
 
+	printf("Boxart: Looking for '%s' in core '%s'\n", game_name, boxart_state.core_name);
+	printf("Boxart: Clean name: '%s'\n", clean_name);
+
 	// Try each image extension
 	for (int ext_idx = 0; image_extensions[ext_idx]; ext_idx++)
 	{
-		// Try: /media/fat/media/{core}/{artwork_type}/{game}.png
+		// Try 1: Clean name (most likely to match artwork)
+		// e.g., /media/fat/media/SNES/boxart/Donkey Kong Country.png
+		snprintf(path_buf, sizeof(path_buf), "%s/%s/%s/%s%s",
+			boxart_state.base_path,
+			boxart_state.core_name,
+			artwork_dirs[type],
+			clean_name,
+			image_extensions[ext_idx]);
+
+		printf("Boxart: Trying path: %s\n", path_buf);
+
+		if (file_exists(path_buf))
+		{
+			printf("Boxart: FOUND!\n");
+			return path_buf;
+		}
+
+		// Try 2: Exact filename without extension
 		snprintf(path_buf, sizeof(path_buf), "%s/%s/%s/%s%s",
 			boxart_state.base_path,
 			boxart_state.core_name,
@@ -198,7 +280,7 @@ const char* boxart_get_path(const char *game_name, artwork_type_t type)
 			return path_buf;
 		}
 
-		// Try normalized name
+		// Try 3: Normalized name (lowercase, underscores)
 		normalize_game_name(base_name, normalized_name, sizeof(normalized_name));
 		snprintf(path_buf, sizeof(path_buf), "%s/%s/%s/%s%s",
 			boxart_state.base_path,
