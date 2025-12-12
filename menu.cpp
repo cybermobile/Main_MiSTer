@@ -932,6 +932,25 @@ static void gfx_menu_sync_file_list(const char *title)
 	gfx_menu_clear_items();
 	gfx_menu_set_title(title ? title : "");
 
+	// Extract system name from current browsing path for boxart lookups
+	// Path format: /media/fat/games/SNES or similar
+	char *current_path = HomeDir();
+	if (current_path)
+	{
+		// Find the last directory component of the path
+		char *last_slash = strrchr(current_path, '/');
+		if (last_slash && last_slash[1])
+		{
+			printf("GFX: Setting boxart core from path '%s' -> '%s'\n", current_path, last_slash + 1);
+			boxart_set_core(last_slash + 1);
+		}
+		else if (current_path[0])
+		{
+			printf("GFX: Setting boxart core to '%s'\n", current_path);
+			boxart_set_core(current_path);
+		}
+	}
+
 	int count = flist_nDirEntries();
 	int selected = flist_iSelectedEntry();
 
@@ -965,7 +984,12 @@ static void gfx_menu_sync_file_list(const char *title)
 				boxart_result_t result;
 				if (boxart_load_any(item->de.d_name, &result))
 				{
+					printf("GFX: Loaded thumbnail for '%s' (size=%dx%d)\n", item->de.d_name, result.width, result.height);
 					gfx_menu_set_item_thumbnail(idx, result.image);
+				}
+				else if (i == selected)
+				{
+					printf("GFX: No boxart found for '%s'\n", item->de.d_name);
 				}
 			}
 		}
@@ -977,7 +1001,8 @@ static void gfx_menu_sync_file_list(const char *title)
 }
 
 // Update gfx_menu selection when classic menu changes
-static void gfx_menu_sync_selection(void)
+// Called from main loop to sync graphical menu with classic menu state
+void gfx_menu_sync_from_classic(void)
 {
 	if (!gfx_menu_is_enabled()) return;
 
@@ -985,6 +1010,7 @@ static void gfx_menu_sync_selection(void)
 	if (gfx_menu_get_selected_index() != selected)
 	{
 		gfx_menu_select_index(selected);
+		gfx_menu_invalidate();  // Trigger redraw when selection changes
 	}
 
 	// Update boxart preview for current selection
@@ -2924,7 +2950,10 @@ void HandleUI(void)
 			}
 		}
 
-		if(!hold_cnt && reboot_req) fpga_load_rbf("menu.rbf");
+		if(!hold_cnt && reboot_req) {
+			if (gfx_menu_is_enabled()) gfx_menu_set_enabled(0);
+			fpga_load_rbf("menu.rbf");
+		}
 		break;
 
 	case MENU_VIDEOPROC1:
@@ -6666,7 +6695,10 @@ void HandleUI(void)
 			menustate = MENU_MISC1;
 		}
 
-		if (!hold_cnt && reboot_req) fpga_load_rbf("menu.rbf");
+		if (!hold_cnt && reboot_req) {
+			if (gfx_menu_is_enabled()) gfx_menu_set_enabled(0);
+			fpga_load_rbf("menu.rbf");
+		}
 		break;
 
 	case MENU_JOYSYSMAP:
@@ -7066,6 +7098,9 @@ void HandleUI(void)
 			}
 		}
 
+		// Disable graphical menu before loading core (restore VT, framebuffer, etc.)
+		if (gfx_menu_is_enabled()) gfx_menu_set_enabled(0);
+
 		if (isXmlName(Selected_tmp))
 		{
 			// find the RBF file from the XML
@@ -7078,6 +7113,8 @@ void HandleUI(void)
 		break;
 
 	case MENU_CORE_FILE_SELECTED2:
+		// Disable graphical menu before loading core
+		if (gfx_menu_is_enabled()) gfx_menu_set_enabled(0);
 		fpga_load_rbf(Selected_tmp, selPath);
 		menustate = MENU_NONE1;
 		break;
@@ -7137,6 +7174,8 @@ void HandleUI(void)
 						OsdWrite(14, s, 1, 0, 0, 0);
 						sprintf(str, "           Loading...");
 						OsdWrite(15, str, 1, 0);
+						// Disable graphical menu before loading boot core
+						if (gfx_menu_is_enabled()) gfx_menu_set_enabled(0);
 						isXmlName(cfg.bootcore) ? xml_load(getFullPath(cfg.bootcore)) : fpga_load_rbf(cfg.bootcore);
 					}
 				}

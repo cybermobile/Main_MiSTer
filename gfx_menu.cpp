@@ -6,6 +6,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <linux/kd.h>
 
 #include "gfx_menu.h"
 #include "video.h"
@@ -15,6 +19,9 @@
 #include "hardware.h"
 #include "animator.h"
 #include "search.h"
+#include "user_io.h"
+#include "osd.h"
+#include "charrom.h"
 
 // Maximum items in menu
 #define GFX_MAX_ITEMS 1024
@@ -53,6 +60,22 @@ static uint32_t selection_pulse_id = 0;
 extern volatile uint32_t *fb_base;
 extern int fb_width;
 extern int fb_height;
+
+#define FB_SIZE (1920*1080)
+// Framebuffer double-buffering for gfx UI.
+// Avoid buffer 0 (Linux fbcon/getty). Use buffers 1 and 2.
+#define GFX_FB_A 1
+#define GFX_FB_B 2
+static int gfx_fb_front = GFX_FB_A;
+
+static void gfx_console_set_graphics_mode(int enable)
+{
+	// /dev/tty0 refers to the currently active VT
+	int fd = open("/dev/tty0", O_RDWR | O_CLOEXEC);
+	if (fd < 0) return;
+	ioctl(fd, KDSETMODE, enable ? KD_GRAPHICS : KD_TEXT);
+	close(fd);
+}
 
 // Forward declarations
 static void render_list_view(Imlib_Image canvas);
@@ -171,6 +194,35 @@ void gfx_menu_set_enabled(int enabled)
 {
 	menu_state.enabled = enabled ? 1 : 0;
 	menu_state.needs_redraw = 1;
+	
+	if (menu_state.enabled)
+	{
+		// Keep menu input routing enabled even though we disable OSD hardware overlay
+		user_io_osd_key_enable(1);
+
+		// Switch away from tty1 (which runs agetty/login) so the Linux console text
+		// doesn't draw over our framebuffer UI. Avoid tty2 (used by doc viewer / scripts).
+		video_chvt(3);
+		// Put the active VT into graphics mode to prevent fbcon/getty text/cursor drawing.
+		gfx_console_set_graphics_mode(1);
+
+		// Enable gfx framebuffer and start on front buffer
+		gfx_fb_front = GFX_FB_A;
+		video_fb_enable(1, gfx_fb_front);
+
+		// Disable OSD hardware overlay
+		OsdDisable();
+	}
+	else
+	{
+		user_io_osd_key_enable(0);
+		// Restore text mode first (non-blocking)
+		gfx_console_set_graphics_mode(0);
+		// Disable our framebuffer - let core/system take over
+		video_fb_enable(0, 0);
+		// Return to default console (may block briefly, do last)
+		video_chvt(1);
+	}
 }
 
 int gfx_menu_is_enabled(void)
@@ -270,7 +322,7 @@ int gfx_menu_add_item(const char *name, const char *path, gfx_item_type_t type)
 	item->type = type;
 	item->is_selected = 0;
 	item->is_favorite = 0;
-	item->thumbnail = NULL;
+	item->thumbnail = NULL;  // Thumbnails loaded separately via gfx_menu_set_item_thumbnail
 
 	menu_state.item_count++;
 	menu_state.needs_redraw = 1;
@@ -577,13 +629,9 @@ static void render_header(Imlib_Image canvas)
 	gfx_rect_t border_rect = { 0, HEADER_HEIGHT - 2, width, 2 };
 	draw_filled_rect(canvas, border_rect, theme->colors.panel_border);
 
-	// Title text (using simple rectangle as placeholder for text)
-	// Real text rendering would use imlib_text_draw() with a loaded font
 	if (menu_state.title[0])
 	{
-		// Placeholder: draw a small indicator where title would be
-		gfx_rect_t title_indicator = { 20, 20, 200, 24 };
-		draw_filled_rect(canvas, title_indicator, theme->colors.text_primary);
+		gfx_draw_text(canvas, menu_state.title, 20, 18, theme->colors.text_primary);
 	}
 }
 
@@ -726,15 +774,12 @@ static void render_list_view(Imlib_Image canvas)
 			draw_filled_rect(canvas, star, theme->colors.text_highlight);
 		}
 
-		// Name text placeholder (real text would use font rendering)
-		gfx_rect_t name_area = { item_rect.x + thumb_size + 8, item_rect.y + 8,
-		                         item_rect.w - thumb_size - 40, 20 };
+		// Name text
 		gfx_color_t text_color = (item_idx == menu_state.selected_index) ?
 		                         theme->colors.text_highlight : theme->colors.text_primary;
-		// Placeholder bar representing text
-		name_area.w = strlen(item->name) * 6;  // Approximate width
-		if (name_area.w > item_rect.w - thumb_size - 40) name_area.w = item_rect.w - thumb_size - 40;
-		draw_filled_rect(canvas, name_area, text_color);
+		int text_x = item_rect.x + thumb_size + 10;
+		int text_y = item_rect.y + 10;
+		gfx_draw_text(canvas, item->name, text_x, text_y, text_color);
 
 		y += item_height;
 	}
@@ -1209,56 +1254,106 @@ static void render_search_overlay(Imlib_Image canvas)
 // Main render function
 void gfx_menu_render(void)
 {
+	static Imlib_Image render_buffer = NULL;
+	static int last_width = 0, last_height = 0;
+	static unsigned long last_render_time = 0;
+	
 	if (!menu_state.enabled) return;
-	if (!menu_state.needs_redraw) return;
-	if (!fb_base || fb_width <= 0 || fb_height <= 0) return;
-
-	// Create canvas image from framebuffer
-	Imlib_Image canvas = imlib_create_image_using_data(fb_width, fb_height,
-		(uint32_t*)(fb_base + (1920*1080 * 1)));  // Use first background buffer
-
-	if (!canvas) return;
-
-	imlib_context_set_image(canvas);
-	imlib_image_set_has_alpha(1);
-
-	// Fill background
-	gfx_theme_t *theme = menu_state.theme;
-	gfx_rect_t full_screen = { 0, 0, fb_width, fb_height };
-	draw_filled_rect(canvas, full_screen, theme->colors.background);
-
-	// Render blurred boxart as background (if available)
-	Imlib_Image boxart = boxart_get_preview_image();
-	if (boxart)
-	{
-		apply_blur_background(canvas, boxart);
+	
+	// If framebuffer isn't ready yet, keep needs_redraw true so we try again later
+	if (!fb_base || fb_width <= 0 || fb_height <= 0) {
+		menu_state.needs_redraw = 1;  // Try again next frame
+		return;
 	}
-
-	// Render UI elements based on view type
-	switch (menu_state.view_type)
-	{
-		case GFX_VIEW_LIST:
-			render_list_view(canvas);
-			render_preview_panel(canvas);
-			break;
-		case GFX_VIEW_GRID:
-			render_grid_view(canvas);
-			break;
-		case GFX_VIEW_WHEEL:
-			render_wheel_view(canvas);
-			break;
-		default:
-			render_list_view(canvas);
-			break;
+	
+	// Frame rate limiter: max ~30fps (33ms between frames) to reduce CPU load
+	unsigned long now = GetTimer(0);
+	if (now - last_render_time < 33 && !menu_state.needs_redraw) {
+		// Just keep current buffer displayed, skip expensive work
+		video_fb_enable(1, gfx_fb_front);
+		OsdDisable();
+		return;
 	}
+	last_render_time = now;
+	// Create or recreate render buffer if size changed
+	if (!render_buffer || last_width != fb_width || last_height != fb_height) {
+		if (render_buffer) {
+			imlib_context_set_image(render_buffer);
+			imlib_free_image();
+		}
+		render_buffer = imlib_create_image(fb_width, fb_height);
+		if (!render_buffer) return;
+		last_width = fb_width;
+		last_height = fb_height;
+		menu_state.needs_redraw = 1;  // Force redraw on size change
+	}
+	
+	// Only do expensive re-render when content changed
+	if (menu_state.needs_redraw)
+	{
+		Imlib_Image canvas = render_buffer;
 
-	render_header(canvas);
-	render_footer(canvas);
+		imlib_context_set_image(canvas);
+		imlib_image_set_has_alpha(1);
 
-	// Render search overlay on top of everything
-	render_search_overlay(canvas);
+		// Fill background
+		gfx_theme_t *theme = menu_state.theme;
+		gfx_rect_t full_screen = { 0, 0, fb_width, fb_height };
+		draw_filled_rect(canvas, full_screen, theme->colors.background);
 
-	menu_state.needs_redraw = 0;
+		// Render blurred boxart as background (if available)
+		Imlib_Image boxart = boxart_get_preview_image();
+		if (boxart)
+		{
+			apply_blur_background(canvas, boxart);
+		}
+
+		// Render UI elements based on view type
+		switch (menu_state.view_type)
+		{
+			case GFX_VIEW_LIST:
+				render_list_view(canvas);
+				render_preview_panel(canvas);
+				break;
+			case GFX_VIEW_GRID:
+				render_grid_view(canvas);
+				break;
+			case GFX_VIEW_WHEEL:
+				render_wheel_view(canvas);
+				break;
+			default:
+				render_list_view(canvas);
+				break;
+		}
+
+		render_header(canvas);
+		render_footer(canvas);
+
+		// Render search overlay on top of everything
+		render_search_overlay(canvas);
+
+		// Copy rendered image to framebuffer (back buffer)
+		imlib_context_set_image(canvas);
+		uint32_t *src_data = imlib_image_get_data_for_reading_only();
+		const int back = (gfx_fb_front == GFX_FB_A) ? GFX_FB_B : GFX_FB_A;
+		volatile uint32_t *dst_data = fb_base + (FB_SIZE * back);
+		if (src_data && dst_data) {
+			memcpy((void*)dst_data, src_data, fb_width * fb_height * 4);
+		}
+
+		menu_state.needs_redraw = 0;
+		
+		// Swap buffers
+		video_fb_enable(1, back);
+		gfx_fb_front = back;
+	}
+	else
+	{
+		// Just keep our buffer displayed (no re-render needed)
+		video_fb_enable(1, gfx_fb_front);
+	}
+	
+	OsdDisable();
 }
 
 // Apply blurred boxart as background
@@ -1330,16 +1425,69 @@ int gfx_menu_handle_input(int key)
 
 void gfx_draw_text(Imlib_Image img, const char *text, int x, int y, gfx_color_t color)
 {
-	// TODO: Implement proper text rendering using Imlib2 fonts
-	// For now, this is a placeholder that draws a colored bar
+	// Render using MiSTer's built-in 8x8 bitmap font (charfont), scaled 2x for readability.
 	if (!text || !img) return;
 
-	int len = strlen(text);
-	gfx_rect_t text_rect = { x, y, len * 8, 16 };
+	const int scale = 2;
 
 	imlib_context_set_image(img);
-	set_imlib_color(color);
-	imlib_image_fill_rectangle(text_rect.x, text_rect.y, text_rect.w, text_rect.h);
+	int w = imlib_image_get_width();
+	int h = imlib_image_get_height();
+	if (w <= 0 || h <= 0) return;
+
+	uint32_t *data = (uint32_t*)imlib_image_get_data();
+	if (!data) return;
+
+	const uint32_t pix = ((uint32_t)color.a << 24) | ((uint32_t)color.r << 16) | ((uint32_t)color.g << 8) | (uint32_t)color.b;
+	int cx = x;
+
+	for (const unsigned char *p = (const unsigned char*)text; *p; ++p)
+	{
+		unsigned char ch = *p;
+		if (ch == '\n')
+		{
+			cx = x;
+			y += 8 * scale + 2;
+			continue;
+		}
+
+		// simple tab
+		if (ch == '\t')
+		{
+			cx += 4 * 8 * scale;
+			continue;
+		}
+
+		// charfont stores columns, not rows: charfont[ch][col] has bits for rows 0-7
+		for (int col = 0; col < 8; col++)
+		{
+			unsigned char bits = charfont[ch][col];
+			for (int row = 0; row < 8; row++)
+			{
+				if (bits & (1 << row))  // bit N = row N
+				{
+					int px0 = cx + col * scale;
+					int py0 = y + row * scale;
+					for (int sy = 0; sy < scale; sy++)
+					{
+						int py = py0 + sy;
+						if (py < 0 || py >= h) continue;
+						uint32_t *rowp = data + py * w;
+						for (int sx = 0; sx < scale; sx++)
+						{
+							int px = px0 + sx;
+							if (px < 0 || px >= w) continue;
+							rowp[px] = pix;
+						}
+					}
+				}
+			}
+		}
+
+		cx += 8 * scale;
+	}
+
+	imlib_image_put_back_data((DATA32*)data);
 }
 
 //// Core Settings Menu Rendering ////

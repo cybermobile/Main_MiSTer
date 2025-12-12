@@ -139,6 +139,9 @@ int main(int argc, char *argv[])
 		// Render graphical menu if enabled
 		if (gfx_menu_is_enabled())
 		{
+			// Sync graphical menu with classic menu state
+			extern void gfx_menu_sync_from_classic(void);
+			gfx_menu_sync_from_classic();
 			gfx_menu_render();
 		}
 

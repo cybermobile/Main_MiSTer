@@ -93,6 +93,7 @@ typedef struct {
 	uint16_t hdr_avg_nits;
 	char vga_mode[16];
 	char vga_mode_int;
+	uint8_t subcarrier;
 	char ntsc_mode;
 	uint32_t controller_unique_mapping[256];
 	char osd_lock[25];
