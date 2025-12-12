@@ -210,6 +210,7 @@ void theme_apply(int index)
 	if (index >= 0 && index < theme_list.count)
 	{
 		active_theme_index = index;
+		theme_list.selected_index = index;
 		gfx_menu_set_theme(&theme_list.entries[index].theme);
 		preview_active = 0;
 		printf("Applied theme: %s\n", theme_list.entries[index].meta.name);

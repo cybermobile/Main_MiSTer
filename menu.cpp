@@ -67,6 +67,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "boxart.h"
 #include "gamedb.h"
 #include "gfx_menu.h"
+#include "theme.h"
 
 /*menu states*/
 enum MENU
@@ -6545,7 +6546,7 @@ void HandleUI(void)
 
 		m = 0;
 		OsdSetTitle("System Settings", OSD_ARROW_LEFT);
-		menumask = 0xFF;
+		menumask = 0x1FF;
 
 		OsdWrite(m++);
 		sprintf(s, "       MiSTer v%s", version + 5);
@@ -6599,16 +6600,21 @@ void HandleUI(void)
 		OsdWrite(m++, " Scripts                   \x16", menusub == 3);
 		sprintf(s, " Graphical Menu:      %s", cfg.gfx_menu_enable ? "On " : "Off");
 		OsdWrite(m++, s, menusub == 4);
-		OsdWrite(m++, " Help                      \x16", menusub == 5);
+		{
+			theme_entry_t *current_theme = theme_get_current();
+			sprintf(s, " Theme:        %s", current_theme ? current_theme->meta.name : "Default");
+			OsdWrite(m++, s, menusub == 5);
+		}
+		OsdWrite(m++, " Help                      \x16", menusub == 6);
 		OsdWrite(m++, "");
 		cr = m;
-		OsdWrite(m++, " Reboot (hold \x16 cold reboot)", menusub == 6);
+		OsdWrite(m++, " Reboot (hold \x16 cold reboot)", menusub == 7);
 		sysinfo_timer = 0;
 
 		reboot_req = 0;
 
 		while(m < OsdGetSize()-1) OsdWrite(m++, "");
-		OsdWrite(15, STD_EXIT, menusub == 7);
+		OsdWrite(15, STD_EXIT, menusub == 8);
 		menustate = MENU_SYSTEM2;
 		break;
 
@@ -6671,12 +6677,25 @@ void HandleUI(void)
 				break;
 
 			case 5:
+				// Cycle to next theme
+				{
+					theme_list_t *list = theme_get_list();
+					if (list && list->count > 0)
+					{
+						int next = (list->selected_index + 1) % list->count;
+						theme_apply(next);
+					}
+					menustate = MENU_SYSTEM1;
+				}
+				break;
+
+			case 6:
 				strcpy(Selected_tmp, DOCS_DIR);
 				FileCreatePath(Selected_tmp);
 				SelectFile(Selected_tmp, "PDFTXTMD ", SCANO_DIR | SCANO_TXT, MENU_DOC_FILE_SELECTED, MENU_NONE1);
 				break;
 
-			case 6:
+			case 7:
 				{
 					reboot_req = 1;
 
@@ -6689,14 +6708,42 @@ void HandleUI(void)
 				}
 				break;
 
-			case 7:
+			case 8:
 				menustate = MENU_NONE1;
 				break;
 			}
 		}
 		else if (left)
 		{
-			menustate = MENU_MISC1;
+			if (menusub == 5)
+			{
+				// Cycle to previous theme
+				theme_list_t *list = theme_get_list();
+				if (list && list->count > 0)
+				{
+					int prev = (list->selected_index - 1 + list->count) % list->count;
+					theme_apply(prev);
+				}
+				menustate = MENU_SYSTEM1;
+			}
+			else
+			{
+				menustate = MENU_MISC1;
+			}
+		}
+		else if (right)
+		{
+			if (menusub == 5)
+			{
+				// Cycle to next theme
+				theme_list_t *list = theme_get_list();
+				if (list && list->count > 0)
+				{
+					int next = (list->selected_index + 1) % list->count;
+					theme_apply(next);
+				}
+				menustate = MENU_SYSTEM1;
+			}
 		}
 
 		if (!hold_cnt && reboot_req) {
