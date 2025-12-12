@@ -36,6 +36,8 @@
 #include "ide.h"
 #include "ide_cdrom.h"
 #include "profiling.h"
+#include "boxart.h"
+#include "gamedb.h"
 
 #include "support.h"
 
@@ -648,6 +650,8 @@ static void parse_config()
 		if (!i)
 		{
 			OsdCoreNameSet((p && p[0]) ? p : "CORE");
+			boxart_set_core((p && p[0]) ? p : "CORE");
+			gamedb_load((p && p[0]) ? p : "CORE");
 		}
 
 		if (i == 1 && p)

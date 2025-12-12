@@ -133,6 +133,29 @@ static const ini_var_t ini_vars[] =
 	{ "LOOKAHEAD", (void *)(&(cfg.lookahead)), UINT8, 0, 3 },
 	{ "MAIN", (void*)(&(cfg.main)), STRING, 0, sizeof(cfg.main) - 1 },
 	{"VFILTER_INTERLACE_DEFAULT", (void*)(&(cfg.vfilter_interlace_default)), STRING, 0, sizeof(cfg.vfilter_interlace_default) - 1 },
+	// Boxart/frontend settings
+	{ "BOXART_ENABLE", (void*)(&(cfg.boxart_enable)), UINT8, 0, 1 },
+	{ "BOXART_SHOW_PREVIEW", (void*)(&(cfg.boxart_show_preview)), UINT8, 0, 1 },
+	{ "BOXART_PATH", (void*)(&(cfg.boxart_path)), STRING, 0, sizeof(cfg.boxart_path) - 1 },
+	// Graphical menu settings
+	{ "GFX_MENU_ENABLE", (void*)(&(cfg.gfx_menu_enable)), UINT8, 0, 1 },
+	{ "GFX_MENU_VIEW", (void*)(&(cfg.gfx_menu_view)), UINT8, 0, 2 },
+	{ "GFX_MENU_THEME", (void*)(&(cfg.gfx_menu_theme)), STRING, 0, sizeof(cfg.gfx_menu_theme) - 1 },
+	// Animation settings
+	{ "ANIM_ENABLE", (void*)(&(cfg.anim_enable)), UINT8, 0, 1 },
+	{ "ANIM_SPEED", (void*)(&(cfg.anim_speed)), UINT8, 1, 10 },
+	// Search settings
+	{ "SEARCH_FUZZY", (void*)(&(cfg.search_fuzzy)), UINT8, 0, 1 },
+	{ "SEARCH_SHOW_KEYBOARD", (void*)(&(cfg.search_show_keyboard)), UINT8, 0, 1 },
+	// Core settings
+	{ "CORE_SETTINGS_UNIFIED", (void*)(&(cfg.core_settings_unified)), UINT8, 0, 1 },
+	{ "CORE_SETTINGS_AUTOSAVE", (void*)(&(cfg.core_settings_autosave)), UINT8, 0, 1 },
+	// Favorites and recents
+	{ "FAVORITES_ENABLE", (void*)(&(cfg.favorites_enable)), UINT8, 0, 1 },
+	{ "RECENT_GAMES_COUNT", (void*)(&(cfg.recent_games_count)), UINT8, 0, 50 },
+	// Gamedb settings
+	{ "GAMEDB_ENABLE", (void*)(&(cfg.gamedb_enable)), UINT8, 0, 1 },
+	{ "GAMEDB_PATH", (void*)(&(cfg.gamedb_path)), STRING, 0, sizeof(cfg.gamedb_path) - 1 },
 };
 
 static const int nvars = (int)(sizeof(ini_vars) / sizeof(ini_var_t));
@@ -592,6 +615,29 @@ void cfg_parse()
 	cfg.video_hue = 0;
 	strcpy(cfg.video_gain_offset, "1, 0, 1, 0, 1, 0");
 	strcpy(cfg.main, "MiSTer");
+	// Boxart defaults
+	cfg.boxart_enable = 1;
+	cfg.boxart_show_preview = 1;
+	strcpy(cfg.boxart_path, "media");
+	// Graphical menu defaults
+	cfg.gfx_menu_enable = 0;  // Disabled by default, use classic OSD
+	cfg.gfx_menu_view = 0;    // List view (0=list, 1=grid, 2=wheel)
+	strcpy(cfg.gfx_menu_theme, "dark");
+	// Animation defaults
+	cfg.anim_enable = 1;
+	cfg.anim_speed = 5;       // 1-10, 5 is default
+	// Search defaults
+	cfg.search_fuzzy = 1;
+	cfg.search_show_keyboard = 1;
+	// Core settings defaults
+	cfg.core_settings_unified = 1;
+	cfg.core_settings_autosave = 1;
+	// Favorites defaults
+	cfg.favorites_enable = 1;
+	cfg.recent_games_count = 20;
+	// Gamedb defaults
+	cfg.gamedb_enable = 1;
+	strcpy(cfg.gamedb_path, "gamedb");
 	has_video_sections = false;
 	using_video_section = false;
 	cfg_error_count = 0;
