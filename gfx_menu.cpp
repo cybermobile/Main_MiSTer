@@ -905,10 +905,10 @@ static void render_preview_panel(Imlib_Image canvas)
 	info_y += 12;
 
 	// Try to get game metadata from database
-	game_entry_t *game_info = NULL;
+	gamedb_entry_t *game_info = NULL;
 	if (cfg.gamedb_enable && selected->path[0])
 	{
-		game_info = gamedb_lookup(selected->path);
+		game_info = gamedb_lookup_filename(selected->path);
 	}
 
 	// Developer / Publisher row
@@ -928,7 +928,7 @@ static void render_preview_panel(Imlib_Image canvas)
 	}
 
 	// Year / Region row
-	if (game_info && (game_info->year > 0 || game_info->region[0]))
+	if (game_info && (game_info->year > 0 || game_info->region != REGION_UNKNOWN))
 	{
 		// Year
 		if (game_info->year > 0)
@@ -941,19 +941,20 @@ static void render_preview_panel(Imlib_Image canvas)
 		}
 
 		// Region
-		if (game_info->region[0])
+		if (game_info->region != REGION_UNKNOWN)
 		{
 			int region_x = info_x + 120;
 			gfx_rect_t region_label = { region_x, info_y + 4, 50, 16 };
 			draw_filled_rect(canvas, region_label, theme->colors.text_secondary);
 
-			int region_width = strlen(game_info->region) * 8;
+			const char *region_name = gamedb_region_name(game_info->region);
+			int region_width = strlen(region_name) * 8;
 			gfx_rect_t region_val = { region_x + 60, info_y + 4, region_width, 16 };
 			draw_filled_rect(canvas, region_val, theme->colors.text_primary);
 		}
 
 		// Players
-		if (game_info->players > 0)
+		if (game_info->players_max > 0)
 		{
 			int players_x = info_x + info_width - 80;
 			gfx_rect_t players_val = { players_x, info_y + 4, 70, 16 };
