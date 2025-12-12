@@ -927,14 +927,17 @@ static int joymap_first = 0;
 // Sync file list to graphical menu system
 static void gfx_menu_sync_file_list(const char *title)
 {
+	printf("GFX: gfx_menu_sync_file_list called, gfx_menu_is_enabled=%d\n", gfx_menu_is_enabled());
 	if (!gfx_menu_is_enabled()) return;
 
+	printf("GFX: Syncing file list, title='%s'\n", title ? title : "NULL");
 	gfx_menu_clear_items();
 	gfx_menu_set_title(title ? title : "");
 
 	// Extract system name from current browsing path for boxart lookups
 	// Path format: /media/fat/games/SNES or similar
 	char *current_path = HomeDir();
+	printf("GFX: HomeDir() = '%s'\n", current_path ? current_path : "NULL");
 	if (current_path)
 	{
 		// Find the last directory component of the path
@@ -976,20 +979,21 @@ static void gfx_menu_sync_file_list(const char *title)
 
 		// Load thumbnails for items near selection (lazy loading)
 		// Only load thumbnails within 10 items of selection for performance
-		if (type == GFX_ITEM_GAME && cfg.boxart_enable && idx >= 0)
+		if (type == GFX_ITEM_GAME && idx >= 0)
 		{
 			int distance = (i > selected) ? (i - selected) : (selected - i);
 			if (distance <= 10)
 			{
+				printf("GFX: Trying to load thumbnail for '%s' (boxart_enable=%d)\n", item->de.d_name, cfg.boxart_enable);
 				boxart_result_t result;
 				if (boxart_load_any(item->de.d_name, &result))
 				{
-					printf("GFX: Loaded thumbnail for '%s' (size=%dx%d)\n", item->de.d_name, result.width, result.height);
+					printf("GFX: SUCCESS - Loaded thumbnail for '%s' (size=%dx%d)\n", item->de.d_name, result.width, result.height);
 					gfx_menu_set_item_thumbnail(idx, result.image);
 				}
-				else if (i == selected)
+				else
 				{
-					printf("GFX: No boxart found for '%s'\n", item->de.d_name);
+					printf("GFX: FAILED - No boxart found for '%s'\n", item->de.d_name);
 				}
 			}
 		}
