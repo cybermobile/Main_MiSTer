@@ -22,6 +22,8 @@
 #include "user_io.h"
 #include "osd.h"
 #include "charrom.h"
+#include "playtime.h"
+#include "gamedb.h"
 
 // Maximum items in menu
 #define GFX_MAX_ITEMS 1024
@@ -112,36 +114,36 @@ static void set_imlib_color(gfx_color_t c)
 	imlib_context_set_color(c.r, c.g, c.b, c.a);
 }
 
-// Initialize default theme with modern dark style
+// Initialize default theme with Analogue-inspired minimalist style
 static void init_default_theme(void)
 {
 	memset(&default_theme, 0, sizeof(default_theme));
-	strcpy(default_theme.name, "Default Dark");
+	strcpy(default_theme.name, "Analogue Dark");
 
-	// Dark theme colors
-	default_theme.colors.background = gfx_color_hex(0xFF1a1a2e);      // Dark blue-black
-	default_theme.colors.panel_bg = gfx_color_hex(0xE016213e);        // Slightly lighter, semi-transparent
-	default_theme.colors.panel_border = gfx_color_hex(0xFF0f3460);    // Blue accent border
-	default_theme.colors.text_primary = gfx_color_hex(0xFFe0e0e0);    // Light gray
-	default_theme.colors.text_secondary = gfx_color_hex(0xFF808080);  // Medium gray
-	default_theme.colors.text_highlight = gfx_color_hex(0xFFe94560);  // Pink/red accent
-	default_theme.colors.selection_bg = gfx_color_hex(0xCC0f3460);    // Blue selection
-	default_theme.colors.selection_border = gfx_color_hex(0xFFe94560); // Pink border
-	default_theme.colors.scrollbar_bg = gfx_color_hex(0x40ffffff);    // Faint white
-	default_theme.colors.scrollbar_fg = gfx_color_hex(0xFFe94560);    // Pink accent
+	// Analogue-inspired color palette - clean, minimalist dark theme
+	default_theme.colors.background = gfx_color_hex(0xFF222222);      // Clean dark gray
+	default_theme.colors.panel_bg = gfx_color_hex(0xE0181818);        // Subtle darker panel
+	default_theme.colors.panel_border = gfx_color_hex(0xFF333333);    // Subtle border
+	default_theme.colors.text_primary = gfx_color_hex(0xFFcccccc);    // High contrast light gray
+	default_theme.colors.text_secondary = gfx_color_hex(0xFF888888);  // Muted gray
+	default_theme.colors.text_highlight = gfx_color_hex(0xFFffffff);  // Pure white for emphasis
+	default_theme.colors.selection_bg = gfx_color_hex(0x30ffffff);    // Subtle white selection
+	default_theme.colors.selection_border = gfx_color_hex(0xFFcccccc); // Clean light border
+	default_theme.colors.scrollbar_bg = gfx_color_hex(0x20ffffff);    // Very subtle
+	default_theme.colors.scrollbar_fg = gfx_color_hex(0xFFcccccc);    // Visible but not harsh
 
-	// Font settings
+	// Font settings - larger for better readability
 	strcpy(default_theme.font_name, "");  // Use default
-	default_theme.font_size_title = 24;
-	default_theme.font_size_item = 18;
-	default_theme.font_size_info = 14;
+	default_theme.font_size_title = 28;
+	default_theme.font_size_item = 20;
+	default_theme.font_size_info = 16;
 
-	// Layout settings
-	default_theme.thumbnail_width = 80;
-	default_theme.thumbnail_height = 80;
-	default_theme.item_spacing = 8;
-	default_theme.panel_padding = 16;
-	default_theme.corner_radius = 8;
+	// Layout settings - more generous spacing
+	default_theme.thumbnail_width = 100;
+	default_theme.thumbnail_height = 100;
+	default_theme.item_spacing = 12;
+	default_theme.panel_padding = 20;
+	default_theme.corner_radius = 4;  // Subtle rounded corners
 	default_theme.background_image = NULL;
 }
 
@@ -788,7 +790,8 @@ static void render_list_view(Imlib_Image canvas)
 	render_scrollbar(canvas, list_bounds);
 }
 
-// Render preview panel (right side with large boxart)
+// Render preview panel (right side with large boxart and game details)
+// Inspired by Analogue 3D Library view
 static void render_preview_panel(Imlib_Image canvas)
 {
 	gfx_theme_t *theme = menu_state.theme;
@@ -816,8 +819,34 @@ static void render_preview_panel(Imlib_Image canvas)
 	gfx_menu_item_t *selected = gfx_menu_get_selected_item();
 	if (!selected) return;
 
+	// For folders, show folder info
+	if (selected->type == GFX_ITEM_FOLDER || selected->type == GFX_ITEM_BACK)
+	{
+		// Folder icon placeholder
+		int icon_size = 80;
+		gfx_rect_t folder_icon = {
+			preview_bounds.x + (preview_bounds.w - icon_size) / 2,
+			preview_bounds.y + preview_bounds.h / 3,
+			icon_size, icon_size
+		};
+		draw_filled_rect(canvas, folder_icon, theme->colors.text_secondary);
+
+		// Folder name
+		int name_width = strlen(selected->name) * 10;
+		if (name_width > preview_bounds.w - 40) name_width = preview_bounds.w - 40;
+		gfx_rect_t folder_name = {
+			preview_bounds.x + (preview_bounds.w - name_width) / 2,
+			folder_icon.y + icon_size + 20,
+			name_width, 20
+		};
+		draw_filled_rect(canvas, folder_name, theme->colors.text_primary);
+		return;
+	}
+
 	// Render large boxart preview
 	Imlib_Image boxart = boxart_get_preview_image();
+	int boxart_bottom = preview_bounds.y + panel_padding;
+
 	if (boxart)
 	{
 		imlib_context_set_image(boxart);
@@ -826,7 +855,7 @@ static void render_preview_panel(Imlib_Image canvas)
 
 		// Calculate scaled size maintaining aspect ratio
 		int max_w = preview_bounds.w - panel_padding * 2;
-		int max_h = (int)(preview_bounds.h * 0.7f);  // Leave room for info
+		int max_h = (int)(preview_bounds.h * 0.55f);  // Leave more room for detailed info
 
 		float scale_x = (float)max_w / (float)src_w;
 		float scale_y = (float)max_h / (float)src_h;
@@ -849,25 +878,135 @@ static void render_preview_panel(Imlib_Image canvas)
 			0, 0, src_w, src_h,
 			dst_x, dst_y, dst_w, dst_h);
 
-		// Border around boxart
-		gfx_rect_t border = { dst_x - 2, dst_y - 2, dst_w + 4, dst_h + 4 };
-		draw_rect_border(canvas, border, theme->colors.panel_border, 2);
+		// Subtle border around boxart
+		gfx_rect_t border = { dst_x - 1, dst_y - 1, dst_w + 2, dst_h + 2 };
+		draw_rect_border(canvas, border, theme->colors.panel_border, 1);
+
+		boxart_bottom = dst_y + dst_h + panel_padding;
 	}
 
-	// Game info area
-	int info_y = preview_bounds.y + (int)(preview_bounds.h * 0.75f);
-	gfx_rect_t info_area = { preview_bounds.x + panel_padding, info_y,
-	                         preview_bounds.w - panel_padding * 2, preview_bounds.h - (info_y - preview_bounds.y) };
+	// Game info area - Analogue-style detailed view
+	int info_y = boxart_bottom + 10;
+	int info_x = preview_bounds.x + panel_padding;
+	int info_width = preview_bounds.w - panel_padding * 2;
+	int line_height = 28;
 
-	// Game title placeholder
-	gfx_rect_t title_bar = { info_area.x, info_area.y, info_area.w, 24 };
-	draw_filled_rect(canvas, title_bar, theme->colors.text_primary);
+	// Game title (larger, prominent)
+	int title_width = strlen(selected->name) * 12;
+	if (title_width > info_width) title_width = info_width;
+	gfx_rect_t title_bar = { info_x, info_y, title_width, 28 };
+	draw_filled_rect(canvas, title_bar, theme->colors.text_highlight);
+	info_y += 36;
 
-	// Description placeholder
-	if (selected->description[0])
+	// Separator line
+	gfx_rect_t sep = { info_x, info_y, info_width, 1 };
+	draw_filled_rect(canvas, sep, theme->colors.panel_border);
+	info_y += 12;
+
+	// Try to get game metadata from database
+	game_entry_t *game_info = NULL;
+	if (cfg.gamedb_enable && selected->path[0])
 	{
-		gfx_rect_t desc_bar = { info_area.x, info_area.y + 32, info_area.w, 16 };
-		draw_filled_rect(canvas, desc_bar, theme->colors.text_secondary);
+		game_info = gamedb_lookup(selected->path);
+	}
+
+	// Developer / Publisher row
+	if (game_info && (game_info->developer[0] || game_info->publisher[0]))
+	{
+		// Label
+		gfx_rect_t label = { info_x, info_y + 4, 80, 16 };
+		draw_filled_rect(canvas, label, theme->colors.text_secondary);
+
+		// Value
+		const char *dev = game_info->developer[0] ? game_info->developer : game_info->publisher;
+		int dev_width = strlen(dev) * 8;
+		if (dev_width > info_width - 100) dev_width = info_width - 100;
+		gfx_rect_t value = { info_x + 90, info_y + 4, dev_width, 16 };
+		draw_filled_rect(canvas, value, theme->colors.text_primary);
+		info_y += line_height;
+	}
+
+	// Year / Region row
+	if (game_info && (game_info->year > 0 || game_info->region[0]))
+	{
+		// Year
+		if (game_info->year > 0)
+		{
+			gfx_rect_t year_label = { info_x, info_y + 4, 40, 16 };
+			draw_filled_rect(canvas, year_label, theme->colors.text_secondary);
+
+			gfx_rect_t year_val = { info_x + 50, info_y + 4, 40, 16 };
+			draw_filled_rect(canvas, year_val, theme->colors.text_primary);
+		}
+
+		// Region
+		if (game_info->region[0])
+		{
+			int region_x = info_x + 120;
+			gfx_rect_t region_label = { region_x, info_y + 4, 50, 16 };
+			draw_filled_rect(canvas, region_label, theme->colors.text_secondary);
+
+			int region_width = strlen(game_info->region) * 8;
+			gfx_rect_t region_val = { region_x + 60, info_y + 4, region_width, 16 };
+			draw_filled_rect(canvas, region_val, theme->colors.text_primary);
+		}
+
+		// Players
+		if (game_info->players > 0)
+		{
+			int players_x = info_x + info_width - 80;
+			gfx_rect_t players_val = { players_x, info_y + 4, 70, 16 };
+			draw_filled_rect(canvas, players_val, theme->colors.text_secondary);
+		}
+		info_y += line_height;
+	}
+
+	// Playtime section (Analogue Library inspired)
+	playtime_entry_t *playtime = playtime_get_entry(selected->path);
+	if (playtime && playtime->total_seconds > 0)
+	{
+		// Separator
+		gfx_rect_t sep2 = { info_x, info_y, info_width, 1 };
+		draw_filled_rect(canvas, sep2, theme->colors.panel_border);
+		info_y += 12;
+
+		// Playtime label and value
+		gfx_rect_t pt_label = { info_x, info_y + 4, 70, 16 };
+		draw_filled_rect(canvas, pt_label, theme->colors.text_secondary);
+
+		char playtime_str[32];
+		playtime_format_duration(playtime->total_seconds, playtime_str, sizeof(playtime_str));
+		int pt_width = strlen(playtime_str) * 10;
+		gfx_rect_t pt_val = { info_x + 80, info_y + 4, pt_width, 16 };
+		draw_filled_rect(canvas, pt_val, theme->colors.text_primary);
+		info_y += line_height;
+
+		// Last played
+		if (playtime->last_played > 0)
+		{
+			gfx_rect_t lp_label = { info_x, info_y + 4, 90, 16 };
+			draw_filled_rect(canvas, lp_label, theme->colors.text_secondary);
+
+			char last_played_str[64];
+			playtime_format_relative_time(playtime->last_played, last_played_str, sizeof(last_played_str));
+			int lp_width = strlen(last_played_str) * 8;
+			gfx_rect_t lp_val = { info_x + 100, info_y + 4, lp_width, 16 };
+			draw_filled_rect(canvas, lp_val, theme->colors.text_primary);
+			info_y += line_height;
+		}
+
+		// Play count
+		if (playtime->play_count > 1)
+		{
+			gfx_rect_t pc_label = { info_x, info_y + 4, 80, 16 };
+			draw_filled_rect(canvas, pc_label, theme->colors.text_secondary);
+
+			char count_str[16];
+			snprintf(count_str, sizeof(count_str), "%u times", playtime->play_count);
+			int pc_width = strlen(count_str) * 8;
+			gfx_rect_t pc_val = { info_x + 90, info_y + 4, pc_width, 16 };
+			draw_filled_rect(canvas, pc_val, theme->colors.text_primary);
+		}
 	}
 }
 

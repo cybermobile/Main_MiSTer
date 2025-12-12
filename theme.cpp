@@ -125,6 +125,16 @@ static void add_builtin_themes(void)
 	strcpy(minimal->meta.description, "Clean minimal interface");
 	minimal->is_builtin = 1;
 	theme_get_minimal(&minimal->theme);
+
+	// Analogue theme (inspired by Analogue 3D / 3DOS)
+	theme_entry_t *analogue = &theme_list.entries[theme_list.count++];
+	memset(analogue, 0, sizeof(theme_entry_t));
+	strcpy(analogue->meta.name, THEME_BUILTIN_ANALOGUE);
+	strcpy(analogue->meta.author, "MiSTer");
+	strcpy(analogue->meta.version, "1.0");
+	strcpy(analogue->meta.description, "Analogue 3D inspired - clean, minimalist");
+	analogue->is_builtin = 1;
+	theme_get_analogue(&analogue->theme);
 }
 
 void theme_scan(void)
@@ -701,6 +711,36 @@ void theme_get_minimal(gfx_theme_t *out_theme)
 	out_theme->thumbnail_height = 64;
 	out_theme->item_spacing = 4;
 	out_theme->panel_padding = 12;
+	out_theme->corner_radius = 4;
+}
+
+void theme_get_analogue(gfx_theme_t *out_theme)
+{
+	memset(out_theme, 0, sizeof(gfx_theme_t));
+	strcpy(out_theme->name, "Analogue");
+
+	// Analogue 3D / 3DOS inspired - clean, minimalist, professional
+	out_theme->colors.background = gfx_color_hex(0xFF222222);      // Clean dark gray
+	out_theme->colors.panel_bg = gfx_color_hex(0xE0181818);        // Subtle darker panel
+	out_theme->colors.panel_border = gfx_color_hex(0xFF333333);    // Subtle border
+	out_theme->colors.text_primary = gfx_color_hex(0xFFcccccc);    // High contrast light gray
+	out_theme->colors.text_secondary = gfx_color_hex(0xFF888888);  // Muted gray
+	out_theme->colors.text_highlight = gfx_color_hex(0xFFffffff);  // Pure white for emphasis
+	out_theme->colors.selection_bg = gfx_color_hex(0x30ffffff);    // Subtle white selection
+	out_theme->colors.selection_border = gfx_color_hex(0xFFcccccc); // Clean light border
+	out_theme->colors.scrollbar_bg = gfx_color_hex(0x20ffffff);    // Very subtle
+	out_theme->colors.scrollbar_fg = gfx_color_hex(0xFFcccccc);    // Visible but not harsh
+
+	// Larger fonts for readability at 4K
+	out_theme->font_size_title = 28;
+	out_theme->font_size_item = 20;
+	out_theme->font_size_info = 16;
+
+	// Generous spacing - Analogue-style clean layout
+	out_theme->thumbnail_width = 100;
+	out_theme->thumbnail_height = 100;
+	out_theme->item_spacing = 12;
+	out_theme->panel_padding = 20;
 	out_theme->corner_radius = 4;
 }
 
