@@ -109,6 +109,21 @@ typedef struct {
 	uint8_t gfx_menu_enable;
 	uint8_t gfx_menu_view;
 	char gfx_menu_theme[256];
+	// Animation settings
+	uint8_t anim_enable;
+	uint8_t anim_speed;          // 1-10 scale (5 = default)
+	// Search settings
+	uint8_t search_fuzzy;        // Enable fuzzy search
+	uint8_t search_show_keyboard;
+	// Core settings
+	uint8_t core_settings_unified;  // Use unified settings menu
+	uint8_t core_settings_autosave;
+	// Favorites and recents
+	uint8_t favorites_enable;
+	uint8_t recent_games_count;  // 0-50, how many recent games to track
+	// Gamedb settings
+	uint8_t gamedb_enable;       // Use game database for metadata
+	char gamedb_path[1024];      // Path to No-Intro DAT files
 } cfg_t;
 
 extern cfg_t cfg;
