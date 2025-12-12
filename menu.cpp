@@ -66,6 +66,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "profiling.h"
 #include "boxart.h"
 #include "gamedb.h"
+#include "gfx_menu.h"
 
 /*menu states*/
 enum MENU
@@ -922,6 +923,77 @@ static int next_ar(int ar, int minus)
 }
 
 static int joymap_first = 0;
+
+// Sync file list to graphical menu system
+static void gfx_menu_sync_file_list(const char *title)
+{
+	if (!gfx_menu_is_enabled()) return;
+
+	gfx_menu_clear_items();
+	gfx_menu_set_title(title ? title : "");
+
+	int count = flist_nDirEntries();
+	int selected = flist_iSelectedEntry();
+
+	for (int i = 0; i < count; i++)
+	{
+		direntext_t *item = flist_DirItem(i);
+		if (!item) continue;
+
+		gfx_item_type_t type;
+		if (item->de.d_type == DT_DIR)
+		{
+			if (strcmp(item->de.d_name, "..") == 0)
+				type = GFX_ITEM_BACK;
+			else
+				type = GFX_ITEM_FOLDER;
+		}
+		else
+		{
+			type = GFX_ITEM_GAME;
+		}
+
+		int idx = gfx_menu_add_item(item->altname, item->de.d_name, type);
+
+		// Load thumbnails for items near selection (lazy loading)
+		// Only load thumbnails within 10 items of selection for performance
+		if (type == GFX_ITEM_GAME && cfg.boxart_enable && idx >= 0)
+		{
+			int distance = (i > selected) ? (i - selected) : (selected - i);
+			if (distance <= 10)
+			{
+				boxart_result_t result;
+				if (boxart_load_any(item->de.d_name, &result))
+				{
+					gfx_menu_set_item_thumbnail(idx, result.image);
+				}
+			}
+		}
+	}
+
+	// Sync selection
+	gfx_menu_select_index(selected);
+	gfx_menu_invalidate();
+}
+
+// Update gfx_menu selection when classic menu changes
+static void gfx_menu_sync_selection(void)
+{
+	if (!gfx_menu_is_enabled()) return;
+
+	int selected = flist_iSelectedEntry();
+	if (gfx_menu_get_selected_index() != selected)
+	{
+		gfx_menu_select_index(selected);
+	}
+
+	// Update boxart preview for current selection
+	direntext_t *item = flist_SelectedItem();
+	if (item && item->de.d_type != DT_DIR)
+	{
+		boxart_set_preview(item->de.d_name);
+	}
+}
 
 static int gun_x = 0;
 static int gun_y = 0;
@@ -5063,6 +5135,9 @@ void HandleUI(void)
 			}
 		}
 
+		// Sync to graphical menu system
+		gfx_menu_sync_file_list((fs_Options & SCANO_CORES) ? "Cores" : "Select");
+
 		if (cfg.log_file_entry && flist_nDirEntries())
 		{
 			//Write out paths infos for external integration
@@ -6437,7 +6512,7 @@ void HandleUI(void)
 
 		m = 0;
 		OsdSetTitle("System Settings", OSD_ARROW_LEFT);
-		menumask = 0x7F;
+		menumask = 0xFF;
 
 		OsdWrite(m++);
 		sprintf(s, "       MiSTer v%s", version + 5);
@@ -6489,16 +6564,18 @@ void HandleUI(void)
 		OsdWrite(m++, " Remap keyboard            \x16", menusub == 1);
 		OsdWrite(m++, " Define joystick buttons   \x16", menusub == 2);
 		OsdWrite(m++, " Scripts                   \x16", menusub == 3);
-		OsdWrite(m++, " Help                      \x16", menusub == 4);
+		sprintf(s, " Graphical Menu:      %s", cfg.gfx_menu_enable ? "On " : "Off");
+		OsdWrite(m++, s, menusub == 4);
+		OsdWrite(m++, " Help                      \x16", menusub == 5);
 		OsdWrite(m++, "");
 		cr = m;
-		OsdWrite(m++, " Reboot (hold \x16 cold reboot)", menusub == 5);
+		OsdWrite(m++, " Reboot (hold \x16 cold reboot)", menusub == 6);
 		sysinfo_timer = 0;
 
 		reboot_req = 0;
 
 		while(m < OsdGetSize()-1) OsdWrite(m++, "");
-		OsdWrite(15, STD_EXIT, menusub == 6);
+		OsdWrite(15, STD_EXIT, menusub == 7);
 		menustate = MENU_SYSTEM2;
 		break;
 
@@ -6554,12 +6631,19 @@ void HandleUI(void)
 				break;
 
 			case 4:
+				// Toggle graphical menu
+				cfg.gfx_menu_enable = !cfg.gfx_menu_enable;
+				gfx_menu_set_enabled(cfg.gfx_menu_enable);
+				menustate = MENU_SYSTEM1;
+				break;
+
+			case 5:
 				strcpy(Selected_tmp, DOCS_DIR);
 				FileCreatePath(Selected_tmp);
 				SelectFile(Selected_tmp, "PDFTXTMD ", SCANO_DIR | SCANO_TXT, MENU_DOC_FILE_SELECTED, MENU_NONE1);
 				break;
 
-			case 5:
+			case 6:
 				{
 					reboot_req = 1;
 
@@ -6572,7 +6656,7 @@ void HandleUI(void)
 				}
 				break;
 
-			case 6:
+			case 7:
 				menustate = MENU_NONE1;
 				break;
 			}
