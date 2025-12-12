@@ -1506,6 +1506,66 @@ void gfx_menu_render(void)
 	OsdDisable();
 }
 
+// Save current graphical menu to PNG file for testing/preview
+int gfx_menu_save_preview(const char *filename)
+{
+	if (!menu_state.enabled) return -1;
+
+	// Create a test image if framebuffer not available
+	int width = (fb_width > 0) ? fb_width : 1920;
+	int height = (fb_height > 0) ? fb_height : 1080;
+
+	Imlib_Image preview = imlib_create_image(width, height);
+	if (!preview) return -2;
+
+	imlib_context_set_image(preview);
+	imlib_image_set_has_alpha(1);
+
+	// Fill background
+	gfx_theme_t *theme = menu_state.theme;
+	gfx_rect_t full_screen = { 0, 0, width, height };
+	draw_filled_rect(preview, full_screen, theme->colors.background);
+
+	// Temporarily set dimensions for rendering
+	int old_width = fb_width;
+	int old_height = fb_height;
+	fb_width = width;
+	fb_height = height;
+
+	// Render UI elements
+	switch (menu_state.view_type)
+	{
+		case GFX_VIEW_LIST:
+			render_list_view(preview);
+			render_preview_panel(preview);
+			break;
+		case GFX_VIEW_GRID:
+			render_grid_view(preview);
+			break;
+		case GFX_VIEW_WHEEL:
+			render_wheel_view(preview);
+			break;
+		default:
+			render_list_view(preview);
+			break;
+	}
+
+	render_header(preview);
+	render_footer(preview);
+
+	// Restore dimensions
+	fb_width = old_width;
+	fb_height = old_height;
+
+	// Save to file
+	imlib_context_set_image(preview);
+	Imlib_Load_Error err;
+	imlib_save_image_with_error_return(filename, &err);
+	imlib_free_image();
+
+	return (err == IMLIB_LOAD_ERROR_NONE) ? 0 : -3;
+}
+
 // Apply blurred boxart as background
 static void apply_blur_background(Imlib_Image canvas, Imlib_Image boxart)
 {

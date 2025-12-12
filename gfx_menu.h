@@ -166,4 +166,7 @@ void gfx_menu_render_settings_category_tabs(int x, int y, int width);
 void gfx_menu_render_settings_list(int x, int y, int width, int height);
 void gfx_menu_render_setting_item(int x, int y, int width, void *setting, int selected);
 
+// Testing/Preview
+int gfx_menu_save_preview(const char *filename);
+
 #endif // __GFX_MENU_H__
