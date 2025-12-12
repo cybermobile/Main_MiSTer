@@ -64,10 +64,10 @@ static int     use_freesync_spd = 0;
 static uint8_t vrr_min_fr = 0;
 static uint8_t vrr_max_fr = 0;
 
-static volatile uint32_t *fb_base = 0;
+volatile uint32_t *fb_base = 0;
 static int fb_enabled = 0;
-static int fb_width = 0;
-static int fb_height = 0;
+int fb_width = 0;
+int fb_height = 0;
 static int fb_num = 0;
 static int brd_x = 0;
 static int brd_y = 0;

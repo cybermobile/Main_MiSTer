@@ -31,6 +31,7 @@
 #include "miniz.h"
 #include "scheduler.h"
 #include "video.h"
+#include "gfx_menu.h"
 #include "support.h"
 
 #define MIN(a,b) (((a)<(b)) ? (a) : (b))
@@ -1147,6 +1148,15 @@ void FindStorage(void)
 		device = 0;
 		cfg_parse();
 		device = saveddev;
+		
+		// Apply graphical menu setting from config
+		gfx_menu_set_enabled(cfg.gfx_menu_enable);
+		if (cfg.gfx_menu_enable)
+		{
+			gfx_menu_load_theme(cfg.gfx_menu_theme);
+			gfx_menu_set_view((gfx_view_type_t)cfg.gfx_menu_view);
+		}
+		
 		video_init();
 		user_io_send_buttons(1);
 

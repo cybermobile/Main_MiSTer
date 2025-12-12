@@ -38,6 +38,7 @@
 #include "profiling.h"
 #include "boxart.h"
 #include "gamedb.h"
+#include "gfx_menu.h"
 
 #include "support.h"
 
@@ -1396,6 +1397,16 @@ void user_io_init(const char *path, const char *xml)
 
 	cfg_parse();
 	cfg_print();
+	
+	// Apply graphical menu setting from config
+	gfx_menu_set_enabled(cfg.gfx_menu_enable);
+	if (cfg.gfx_menu_enable)
+	{
+		gfx_menu_load_theme(cfg.gfx_menu_theme);
+		gfx_menu_set_view((gfx_view_type_t)cfg.gfx_menu_view);
+		printf("Graphical menu enabled (theme: %s, view: %d)\n", cfg.gfx_menu_theme, cfg.gfx_menu_view);
+	}
+	
 	while (cfg.waitmount[0] && !is_menu())
 	{
 		printf("> > > wait for %s mount < < <\n", cfg.waitmount);
