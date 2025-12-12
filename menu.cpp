@@ -68,6 +68,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "gamedb.h"
 #include "gfx_menu.h"
 #include "theme.h"
+#include "search.h"
 
 /*menu states*/
 enum MENU
@@ -1323,6 +1324,30 @@ void HandleUI(void)
 			break;
 		case KEY_GRAVE:
 			recent = true;
+			break;
+
+		// Graphical menu shortcuts
+		case KEY_V:
+			// Toggle view mode in graphical menu (List/Grid/Wheel)
+			if (gfx_menu_is_enabled() && menu_use_graphical())
+			{
+				gfx_menu_cycle_view();
+			}
+			break;
+		case KEY_TAB:
+			// Toggle graphical menu on/off
+			if (is_menu())
+			{
+				cfg.gfx_menu_enable = !cfg.gfx_menu_enable;
+				gfx_menu_set_enabled(cfg.gfx_menu_enable);
+			}
+			break;
+		case KEY_SLASH:
+			// Open search in graphical menu
+			if (gfx_menu_is_enabled() && menu_use_graphical())
+			{
+				search_toggle();
+			}
 			break;
 		}
 	}
@@ -7574,6 +7599,26 @@ int menu_allow_cfg_switch()
 	}
 
 	return 0;
+}
+
+// Returns 1 if graphical menu should render (file browser mode)
+// Returns 0 if OSD should be shown instead (settings, config menus)
+int menu_use_graphical(void)
+{
+	// Only use graphical menu in file select state
+	switch (menustate)
+	{
+	case MENU_FILE_SELECT1:
+	case MENU_FILE_SELECT2:
+		return 1;
+	case MENU_NONE1:
+	case MENU_NONE2:
+		// Show graphical menu in idle state when enabled
+		return cfg.gfx_menu_enable;
+	default:
+		// For all other menu states (System Settings, configs, etc.), show OSD
+		return 0;
+	}
 }
 
 void menu_process_save()

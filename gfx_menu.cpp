@@ -24,6 +24,7 @@
 #include "charrom.h"
 #include "playtime.h"
 #include "gamedb.h"
+#include "menu.h"
 
 // Maximum items in menu
 #define GFX_MAX_ITEMS 1024
@@ -1396,15 +1397,24 @@ void gfx_menu_render(void)
 	static Imlib_Image render_buffer = NULL;
 	static int last_width = 0, last_height = 0;
 	static unsigned long last_render_time = 0;
-	
+
 	if (!menu_state.enabled) return;
-	
+
+	// Check if we should show graphical menu or let OSD show
+	// (e.g., when in System Settings, OSD should be visible)
+	if (!menu_use_graphical())
+	{
+		// Let OSD show instead - disable our framebuffer
+		video_fb_enable(0, 0);
+		return;
+	}
+
 	// If framebuffer isn't ready yet, keep needs_redraw true so we try again later
 	if (!fb_base || fb_width <= 0 || fb_height <= 0) {
 		menu_state.needs_redraw = 1;  // Try again next frame
 		return;
 	}
-	
+
 	// Frame rate limiter: max ~30fps (33ms between frames) to reduce CPU load
 	unsigned long now = GetTimer(0);
 	if (now - last_render_time < 33 && !menu_state.needs_redraw) {
