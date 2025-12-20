@@ -2,6 +2,25 @@
 
 This repo serves as the home for the MiSTer Main binaries and the Wiki.
 
+## UI Preview
+
+### Main Interface
+![Main Preview](ui_preview/preview.png)
+
+### Grid View
+![Grid View](ui_preview/preview.png_Grid.png)
+
+### Wheel View
+![Wheel View](ui_preview/preview.png_Wheel.png)
+
+### NFC States
+| Idle | Scanning | Card Detected | Disconnected |
+|------|----------|---------------|--------------|
+| ![NFC Idle](ui_preview/preview_nfc_Idle.png) | ![NFC Scanning](ui_preview/preview_nfc_Scanning.png) | ![NFC Card Detected](ui_preview/preview_nfc_CardDetected.png) | ![NFC Disconnected](ui_preview/preview_nfc_Disconnected.png) |
+
+### Zaparoo Overlay
+![Zaparoo Overlay](ui_preview/preview_zaparoo_overlay.png)
+
 For the purposes of getting google to crawl the wiki, here's a link to the (not for humans) [crawlable wiki](https://github-wiki-see.page/m/MiSTer-devel/Wiki_MiSTer/wiki)
 
 If you're a human looking for the wiki, that's [here](https://github.com/MiSTer-devel/Wiki_MiSTer/wiki)
