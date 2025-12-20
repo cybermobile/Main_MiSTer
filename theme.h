@@ -22,6 +22,7 @@
 #define THEME_BUILTIN_RETRO "Retro"
 #define THEME_BUILTIN_NEON "Neon"
 #define THEME_BUILTIN_MINIMAL "Minimal"
+#define THEME_BUILTIN_ANALOGUE "Analogue"
 
 // Theme metadata
 typedef struct {
@@ -122,6 +123,9 @@ void theme_get_neon(gfx_theme_t *out_theme);
 
 // Get minimal theme
 void theme_get_minimal(gfx_theme_t *out_theme);
+
+// Get Analogue-inspired theme
+void theme_get_analogue(gfx_theme_t *out_theme);
 
 //// Theme Editing ////
 

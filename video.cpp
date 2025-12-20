@@ -31,6 +31,7 @@
 #include "support/arcade/mra_loader.h"
 #include "lib/imlib2/Imlib2.h"
 #include "lib/md5/md5.h"
+#include "gfx_menu.h"
 
 #define FB_SIZE  (1920*1080)
 #define FB_ADDR  (0x20000000 + (32*1024*1024)) // 512mb + 32mb(Core's fb)
@@ -64,10 +65,10 @@ static int     use_freesync_spd = 0;
 static uint8_t vrr_min_fr = 0;
 static uint8_t vrr_max_fr = 0;
 
-static volatile uint32_t *fb_base = 0;
+volatile uint32_t *fb_base = 0;
 static int fb_enabled = 0;
-static int fb_width = 0;
-static int fb_height = 0;
+int fb_width = 0;
+int fb_height = 0;
 static int fb_num = 0;
 static int brd_x = 0;
 static int brd_y = 0;
@@ -3529,6 +3530,10 @@ static int bg_has_picture = 0;
 extern uint8_t  _binary_logo_png_start[], _binary_logo_png_end[];
 void video_menu_bg(int n, int idle)
 {
+	// When the graphical menu is enabled, it owns the framebuffer.
+	// Avoid drawing the classic background / switching buffers underneath it.
+	if (gfx_menu_is_enabled()) return;
+
 	bg_has_picture = 0;
 	menu_bg = n;
 	if (n)

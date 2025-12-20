@@ -1,5 +1,6 @@
 #include "scheduler.h"
 #include <stdio.h>
+#include <sys/time.h>
 #include "libco.h"
 #include "menu.h"
 #include "user_io.h"
@@ -7,6 +8,8 @@
 #include "fpga_io.h"
 #include "osd.h"
 #include "profiling.h"
+#include "gfx_menu.h"
+#include "animator.h"
 
 static cothread_t co_scheduler = nullptr;
 static cothread_t co_poll = nullptr;
@@ -39,11 +42,34 @@ static void scheduler_co_poll(void)
 
 static void scheduler_co_ui(void)
 {
+	// Frame timing for animations (gfx menu + animator)
+	struct timeval last_frame_time, current_frame_time;
+	gettimeofday(&last_frame_time, NULL);
+
 	for (;;)
 	{
 		{
 			SPIKE_SCOPE("co_ui", 1000);
+
+			// Delta time for animations
+			gettimeofday(&current_frame_time, NULL);
+			float delta_time = (current_frame_time.tv_sec - last_frame_time.tv_sec) +
+			                   (current_frame_time.tv_usec - last_frame_time.tv_usec) / 1000000.0f;
+			last_frame_time = current_frame_time;
+
+			anim_update(delta_time);
+			gfx_menu_update_animations(delta_time);
+
 			HandleUI();
+
+			// Render graphical menu if enabled (scheduler build path)
+			if (gfx_menu_is_enabled())
+			{
+				extern void gfx_menu_sync_from_classic(void);
+				gfx_menu_sync_from_classic();
+				gfx_menu_render();
+			}
+
 			OsdUpdate();
 		}
 

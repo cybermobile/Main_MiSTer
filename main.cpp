@@ -33,6 +33,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "scheduler.h"
 #include "osd.h"
 #include "offload.h"
+#include "cfg.h"
 #include "boxart.h"
 #include "gfx_menu.h"
 #include "gamedb.h"
@@ -86,6 +87,26 @@ int main(int argc, char *argv[])
 	core_settings_init();
 	user_io_init((argc > 1) ? argv[1] : "",(argc > 2) ? argv[2] : NULL);
 
+	// Enable graphical menu if configured in MiSTer.ini
+	if (cfg.gfx_menu_enable)
+	{
+		printf("Graphical menu enabled\n");
+		gfx_menu_set_enabled(1);
+		gfx_menu_set_view((gfx_view_type_t)cfg.gfx_menu_view);
+
+		// Load theme by name
+		if (cfg.gfx_menu_theme[0])
+		{
+			theme_select_by_name(cfg.gfx_menu_theme);
+			theme_entry_t *theme_entry = theme_get_current();
+			if (theme_entry)
+			{
+				gfx_menu_set_theme(&theme_entry->theme);
+				printf("Loaded theme: %s\n", theme_entry->meta.name);
+			}
+		}
+	}
+
 #ifdef USE_SCHEDULER
 	scheduler_init();
 	scheduler_run();
@@ -114,6 +135,16 @@ int main(int argc, char *argv[])
 		user_io_poll();
 		input_poll(0);
 		HandleUI();
+
+		// Render graphical menu if enabled
+		if (gfx_menu_is_enabled())
+		{
+			// Sync graphical menu with classic menu state
+			extern void gfx_menu_sync_from_classic(void);
+			gfx_menu_sync_from_classic();
+			gfx_menu_render();
+		}
+
 		OsdUpdate();
 	}
 #endif

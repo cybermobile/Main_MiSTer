@@ -125,6 +125,7 @@ static const ini_var_t ini_vars[] =
 	{ "HDR_MAX_NITS", (void*)(&(cfg.hdr_max_nits)), UINT16, 100, 10000 },
 	{ "HDR_AVG_NITS", (void*)(&(cfg.hdr_avg_nits)), UINT16, 100, 10000 },
 	{ "VGA_MODE", (void*)(&(cfg.vga_mode)), STRING, 0, sizeof(cfg.vga_mode) - 1 },
+	{ "SUBCARRIER", (void*)(&(cfg.subcarrier)), UINT8, 0, 1 },
 	{ "NTSC_MODE", (void *)(&(cfg.ntsc_mode)), UINT8, 0, 2 },
 	{ "CONTROLLER_UNIQUE_MAPPING", (void *)(cfg.controller_unique_mapping), UINT32ARR, 0, 0xFFFFFFFF },
 	{ "OSD_LOCK", (void*)(&(cfg.osd_lock)), STRING, 0, sizeof(cfg.osd_lock) - 1 },

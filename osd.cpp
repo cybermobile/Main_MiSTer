@@ -46,6 +46,7 @@ as rotated copies of the first 128 entries.  -- AMR
 #include "user_io.h"
 #include "hardware.h"
 #include "profiling.h"
+#include "gfx_menu.h"
 
 #include "support.h"
 
@@ -500,6 +501,10 @@ void OsdClear(void)
 // enable displaying of OSD
 void OsdEnable(unsigned char mode)
 {
+	// In graphical menu mode, we keep input routing enabled elsewhere (gfx_menu_set_enabled),
+	// and we must not toggle osd_is_visible here (it would break menu key routing).
+	if (gfx_menu_is_enabled()) return;
+
 	user_io_osd_key_enable(mode & DISABLE_KEYBOARD);
 	mode &= (DISABLE_KEYBOARD | OSD_MSG);
 	spi_osd_cmd(OSD_CMD_ENABLE | mode);
@@ -507,6 +512,9 @@ void OsdEnable(unsigned char mode)
 
 void InfoEnable(int x, int y, int width, int height)
 {
+	// Same rationale as OsdEnable(): don't disturb osd_is_visible in gfx mode.
+	if (gfx_menu_is_enabled()) return;
+
 	user_io_osd_key_enable(0);
 	spi_osd_cmd_cont(OSD_CMD_ENABLE | OSD_INFO);
 	spi_w(x);
@@ -530,12 +538,23 @@ void OsdRotation(uint8_t rotate)
 // disable displaying of OSD
 void OsdDisable()
 {
+	// In gfx menu mode we want the OSD hardware disabled, but we must keep osd_is_visible
+	// enabled for keyboard routing, so don't call user_io_osd_key_enable(0) here.
+	if (gfx_menu_is_enabled())
+	{
+		spi_osd_cmd(OSD_CMD_DISABLE);
+		return;
+	}
+
 	user_io_osd_key_enable(0);
 	spi_osd_cmd(OSD_CMD_DISABLE);
 }
 
 void OsdMenuCtl(int en)
 {
+	// Skip OSD hardware control when graphical menu is active
+	if (gfx_menu_is_enabled()) return;
+	
 	if (en)
 	{
 		spi_osd_cmd(OSD_CMD_WRITE | 8);
@@ -663,6 +682,14 @@ char* OsdCoreNameGet()
 void OsdUpdate()
 {
 	PROFILE_FUNCTION();
+
+	// Skip OSD hardware updates when graphical menu is active
+	if (gfx_menu_is_enabled())
+	{
+		osdset = 0;
+		return;
+	}
+	
 	int n = is_menu() ? 19 : osd_size;
 	for (int i = 0; i < n; i++)
 	{

@@ -6,6 +6,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <linux/kd.h>
 
 #include "gfx_menu.h"
 #include "video.h"
@@ -15,6 +19,13 @@
 #include "hardware.h"
 #include "animator.h"
 #include "search.h"
+#include "user_io.h"
+#include "osd.h"
+#include "charrom.h"
+#include "playtime.h"
+#include "gamedb.h"
+#include "menu.h"
+#include "zaparoo.h"
 
 // Maximum items in menu
 #define GFX_MAX_ITEMS 1024
@@ -54,16 +65,34 @@ extern volatile uint32_t *fb_base;
 extern int fb_width;
 extern int fb_height;
 
+#define FB_SIZE (1920*1080)
+// Framebuffer double-buffering for gfx UI.
+// Avoid buffer 0 (Linux fbcon/getty). Use buffers 1 and 2.
+#define GFX_FB_A 1
+#define GFX_FB_B 2
+static int gfx_fb_front = GFX_FB_A;
+
+static void gfx_console_set_graphics_mode(int enable)
+{
+	// /dev/tty0 refers to the currently active VT
+	int fd = open("/dev/tty0", O_RDWR | O_CLOEXEC);
+	if (fd < 0) return;
+	ioctl(fd, KDSETMODE, enable ? KD_GRAPHICS : KD_TEXT);
+	close(fd);
+}
+
 // Forward declarations
 static void render_list_view(Imlib_Image canvas);
 static void render_grid_view(Imlib_Image canvas);
 static void render_wheel_view(Imlib_Image canvas);
 static void render_search_overlay(Imlib_Image canvas);
+static void render_zaparoo_overlay(Imlib_Image canvas);
 static void render_header(Imlib_Image canvas);
 static void render_footer(Imlib_Image canvas);
 static void render_preview_panel(Imlib_Image canvas);
 static void render_scrollbar(Imlib_Image canvas, gfx_rect_t bounds);
 static void apply_blur_background(Imlib_Image canvas, Imlib_Image boxart);
+static void draw_nfc_icon(Imlib_Image canvas, int x, int y, int size, gfx_color_t color);
 
 // Helper: Create color from RGBA
 gfx_color_t gfx_color_rgba(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
@@ -89,36 +118,36 @@ static void set_imlib_color(gfx_color_t c)
 	imlib_context_set_color(c.r, c.g, c.b, c.a);
 }
 
-// Initialize default theme with modern dark style
+// Initialize default theme with Analogue-inspired minimalist style
 static void init_default_theme(void)
 {
 	memset(&default_theme, 0, sizeof(default_theme));
-	strcpy(default_theme.name, "Default Dark");
+	strcpy(default_theme.name, "Analogue Dark");
 
-	// Dark theme colors
-	default_theme.colors.background = gfx_color_hex(0xFF1a1a2e);      // Dark blue-black
-	default_theme.colors.panel_bg = gfx_color_hex(0xE016213e);        // Slightly lighter, semi-transparent
-	default_theme.colors.panel_border = gfx_color_hex(0xFF0f3460);    // Blue accent border
-	default_theme.colors.text_primary = gfx_color_hex(0xFFe0e0e0);    // Light gray
-	default_theme.colors.text_secondary = gfx_color_hex(0xFF808080);  // Medium gray
-	default_theme.colors.text_highlight = gfx_color_hex(0xFFe94560);  // Pink/red accent
-	default_theme.colors.selection_bg = gfx_color_hex(0xCC0f3460);    // Blue selection
-	default_theme.colors.selection_border = gfx_color_hex(0xFFe94560); // Pink border
-	default_theme.colors.scrollbar_bg = gfx_color_hex(0x40ffffff);    // Faint white
-	default_theme.colors.scrollbar_fg = gfx_color_hex(0xFFe94560);    // Pink accent
+	// Analogue-inspired color palette - clean, minimalist dark theme
+	default_theme.colors.background = gfx_color_hex(0xFF222222);      // Clean dark gray
+	default_theme.colors.panel_bg = gfx_color_hex(0xE0181818);        // Subtle darker panel
+	default_theme.colors.panel_border = gfx_color_hex(0xFF333333);    // Subtle border
+	default_theme.colors.text_primary = gfx_color_hex(0xFFcccccc);    // High contrast light gray
+	default_theme.colors.text_secondary = gfx_color_hex(0xFF888888);  // Muted gray
+	default_theme.colors.text_highlight = gfx_color_hex(0xFFffffff);  // Pure white for emphasis
+	default_theme.colors.selection_bg = gfx_color_hex(0x30ffffff);    // Subtle white selection
+	default_theme.colors.selection_border = gfx_color_hex(0xFFcccccc); // Clean light border
+	default_theme.colors.scrollbar_bg = gfx_color_hex(0x20ffffff);    // Very subtle
+	default_theme.colors.scrollbar_fg = gfx_color_hex(0xFFcccccc);    // Visible but not harsh
 
-	// Font settings
+	// Font settings - larger for better readability
 	strcpy(default_theme.font_name, "");  // Use default
-	default_theme.font_size_title = 24;
-	default_theme.font_size_item = 18;
-	default_theme.font_size_info = 14;
+	default_theme.font_size_title = 28;
+	default_theme.font_size_item = 20;
+	default_theme.font_size_info = 16;
 
-	// Layout settings
-	default_theme.thumbnail_width = 80;
-	default_theme.thumbnail_height = 80;
-	default_theme.item_spacing = 8;
-	default_theme.panel_padding = 16;
-	default_theme.corner_radius = 8;
+	// Layout settings - more generous spacing
+	default_theme.thumbnail_width = 100;
+	default_theme.thumbnail_height = 100;
+	default_theme.item_spacing = 12;
+	default_theme.panel_padding = 20;
+	default_theme.corner_radius = 4;  // Subtle rounded corners
 	default_theme.background_image = NULL;
 }
 
@@ -171,6 +200,35 @@ void gfx_menu_set_enabled(int enabled)
 {
 	menu_state.enabled = enabled ? 1 : 0;
 	menu_state.needs_redraw = 1;
+	
+	if (menu_state.enabled)
+	{
+		// Keep menu input routing enabled even though we disable OSD hardware overlay
+		user_io_osd_key_enable(1);
+
+		// Switch away from tty1 (which runs agetty/login) so the Linux console text
+		// doesn't draw over our framebuffer UI. Avoid tty2 (used by doc viewer / scripts).
+		video_chvt(3);
+		// Put the active VT into graphics mode to prevent fbcon/getty text/cursor drawing.
+		gfx_console_set_graphics_mode(1);
+
+		// Enable gfx framebuffer and start on front buffer
+		gfx_fb_front = GFX_FB_A;
+		video_fb_enable(1, gfx_fb_front);
+
+		// Disable OSD hardware overlay
+		OsdDisable();
+	}
+	else
+	{
+		user_io_osd_key_enable(0);
+		// Restore text mode first (non-blocking)
+		gfx_console_set_graphics_mode(0);
+		// Disable our framebuffer - let core/system take over
+		video_fb_enable(0, 0);
+		// Return to default console (may block briefly, do last)
+		video_chvt(1);
+	}
 }
 
 int gfx_menu_is_enabled(void)
@@ -270,7 +328,7 @@ int gfx_menu_add_item(const char *name, const char *path, gfx_item_type_t type)
 	item->type = type;
 	item->is_selected = 0;
 	item->is_favorite = 0;
-	item->thumbnail = NULL;
+	item->thumbnail = NULL;  // Thumbnails loaded separately via gfx_menu_set_item_thumbnail
 
 	menu_state.item_count++;
 	menu_state.needs_redraw = 1;
@@ -561,6 +619,53 @@ void gfx_draw_rounded_rect(Imlib_Image img, gfx_rect_t rect, int radius, gfx_col
 	draw_filled_rect(img, rect, color);
 }
 
+// Draw NFC icon (card shape with radio waves)
+static void draw_nfc_icon(Imlib_Image canvas, int x, int y, int size, gfx_color_t color)
+{
+	imlib_context_set_image(canvas);
+	set_imlib_color(color);
+
+	// Card body (rectangle)
+	int card_w = size;
+	int card_h = (int)(size * 0.7f);
+	int card_x = x;
+	int card_y = y + (size - card_h) / 2;
+
+	// Draw card outline
+	int thickness = 2;
+	// Top
+	imlib_image_fill_rectangle(card_x, card_y, card_w, thickness);
+	// Bottom
+	imlib_image_fill_rectangle(card_x, card_y + card_h - thickness, card_w, thickness);
+	// Left
+	imlib_image_fill_rectangle(card_x, card_y, thickness, card_h);
+	// Right
+	imlib_image_fill_rectangle(card_x + card_w - thickness, card_y, thickness, card_h);
+
+	// Radio wave arcs (simplified as concentric partial rectangles/lines)
+	// Draw 3 curved lines emanating from top-right corner
+	int wave_x = card_x + card_w - 8;
+	int wave_y = card_y + 4;
+
+	// Wave 1 (innermost)
+	imlib_image_fill_rectangle(wave_x - 2, wave_y, 4, 2);
+	imlib_image_fill_rectangle(wave_x + 2, wave_y, 2, 4);
+
+	// Wave 2 (middle)
+	imlib_image_fill_rectangle(wave_x - 5, wave_y - 2, 6, 2);
+	imlib_image_fill_rectangle(wave_x + 4, wave_y - 2, 2, 6);
+
+	// Wave 3 (outermost)
+	imlib_image_fill_rectangle(wave_x - 8, wave_y - 4, 8, 2);
+	imlib_image_fill_rectangle(wave_x + 6, wave_y - 4, 2, 8);
+
+	// Small chip rectangle inside card
+	int chip_size = 6;
+	int chip_x = card_x + 6;
+	int chip_y = card_y + (card_h - chip_size) / 2;
+	imlib_image_fill_rectangle(chip_x, chip_y, chip_size, chip_size);
+}
+
 // Render header bar with title
 static void render_header(Imlib_Image canvas)
 {
@@ -577,14 +682,43 @@ static void render_header(Imlib_Image canvas)
 	gfx_rect_t border_rect = { 0, HEADER_HEIGHT - 2, width, 2 };
 	draw_filled_rect(canvas, border_rect, theme->colors.panel_border);
 
-	// Title text (using simple rectangle as placeholder for text)
-	// Real text rendering would use imlib_text_draw() with a loaded font
 	if (menu_state.title[0])
 	{
-		// Placeholder: draw a small indicator where title would be
-		gfx_rect_t title_indicator = { 20, 20, 200, 24 };
-		draw_filled_rect(canvas, title_indicator, theme->colors.text_primary);
+		gfx_draw_text(canvas, menu_state.title, 20, 18, theme->colors.text_primary);
 	}
+
+	// Zaparoo NFC status icon (right side of header)
+	int icon_x = width - 70;
+	int icon_y = 15;
+	int icon_size = 30;
+
+	zaparoo_status_t zap_status = zaparoo_get_status();
+	gfx_color_t icon_color;
+
+	switch (zap_status)
+	{
+	case ZAPAROO_DISCONNECTED:
+		// Dark gray with low opacity - no reader connected
+		icon_color = gfx_color_rgba(80, 80, 80, 100);
+		break;
+	case ZAPAROO_IDLE:
+		// Cyan/teal - reader connected and ready
+		icon_color = gfx_color_rgba(80, 180, 220, 255);
+		break;
+	case ZAPAROO_SCANNING:
+		// Yellow/orange pulse - actively scanning
+		icon_color = gfx_color_rgba(255, 200, 80, 255);
+		break;
+	case ZAPAROO_CARD_DETECTED:
+		// Bright green - card detected successfully
+		icon_color = gfx_color_rgba(80, 220, 120, 255);
+		break;
+	default:
+		icon_color = gfx_color_rgba(80, 80, 80, 100);
+		break;
+	}
+
+	draw_nfc_icon(canvas, icon_x, icon_y, icon_size, icon_color);
 }
 
 // Render footer bar with controls hint
@@ -726,15 +860,12 @@ static void render_list_view(Imlib_Image canvas)
 			draw_filled_rect(canvas, star, theme->colors.text_highlight);
 		}
 
-		// Name text placeholder (real text would use font rendering)
-		gfx_rect_t name_area = { item_rect.x + thumb_size + 8, item_rect.y + 8,
-		                         item_rect.w - thumb_size - 40, 20 };
+		// Name text
 		gfx_color_t text_color = (item_idx == menu_state.selected_index) ?
 		                         theme->colors.text_highlight : theme->colors.text_primary;
-		// Placeholder bar representing text
-		name_area.w = strlen(item->name) * 6;  // Approximate width
-		if (name_area.w > item_rect.w - thumb_size - 40) name_area.w = item_rect.w - thumb_size - 40;
-		draw_filled_rect(canvas, name_area, text_color);
+		int text_x = item_rect.x + thumb_size + 10;
+		int text_y = item_rect.y + 10;
+		gfx_draw_text(canvas, item->name, text_x, text_y, text_color);
 
 		y += item_height;
 	}
@@ -743,7 +874,8 @@ static void render_list_view(Imlib_Image canvas)
 	render_scrollbar(canvas, list_bounds);
 }
 
-// Render preview panel (right side with large boxart)
+// Render preview panel (right side with large boxart and game details)
+// Inspired by Analogue 3D Library view
 static void render_preview_panel(Imlib_Image canvas)
 {
 	gfx_theme_t *theme = menu_state.theme;
@@ -771,8 +903,34 @@ static void render_preview_panel(Imlib_Image canvas)
 	gfx_menu_item_t *selected = gfx_menu_get_selected_item();
 	if (!selected) return;
 
+	// For folders, show folder info
+	if (selected->type == GFX_ITEM_FOLDER || selected->type == GFX_ITEM_BACK)
+	{
+		// Folder icon placeholder
+		int icon_size = 80;
+		gfx_rect_t folder_icon = {
+			preview_bounds.x + (preview_bounds.w - icon_size) / 2,
+			preview_bounds.y + preview_bounds.h / 3,
+			icon_size, icon_size
+		};
+		draw_filled_rect(canvas, folder_icon, theme->colors.text_secondary);
+
+		// Folder name
+		int name_width = strlen(selected->name) * 10;
+		if (name_width > preview_bounds.w - 40) name_width = preview_bounds.w - 40;
+		gfx_rect_t folder_name = {
+			preview_bounds.x + (preview_bounds.w - name_width) / 2,
+			folder_icon.y + icon_size + 20,
+			name_width, 20
+		};
+		draw_filled_rect(canvas, folder_name, theme->colors.text_primary);
+		return;
+	}
+
 	// Render large boxart preview
 	Imlib_Image boxart = boxart_get_preview_image();
+	int boxart_bottom = preview_bounds.y + panel_padding;
+
 	if (boxart)
 	{
 		imlib_context_set_image(boxart);
@@ -781,7 +939,7 @@ static void render_preview_panel(Imlib_Image canvas)
 
 		// Calculate scaled size maintaining aspect ratio
 		int max_w = preview_bounds.w - panel_padding * 2;
-		int max_h = (int)(preview_bounds.h * 0.7f);  // Leave room for info
+		int max_h = (int)(preview_bounds.h * 0.55f);  // Leave more room for detailed info
 
 		float scale_x = (float)max_w / (float)src_w;
 		float scale_y = (float)max_h / (float)src_h;
@@ -804,25 +962,136 @@ static void render_preview_panel(Imlib_Image canvas)
 			0, 0, src_w, src_h,
 			dst_x, dst_y, dst_w, dst_h);
 
-		// Border around boxart
-		gfx_rect_t border = { dst_x - 2, dst_y - 2, dst_w + 4, dst_h + 4 };
-		draw_rect_border(canvas, border, theme->colors.panel_border, 2);
+		// Subtle border around boxart
+		gfx_rect_t border = { dst_x - 1, dst_y - 1, dst_w + 2, dst_h + 2 };
+		draw_rect_border(canvas, border, theme->colors.panel_border, 1);
+
+		boxart_bottom = dst_y + dst_h + panel_padding;
 	}
 
-	// Game info area
-	int info_y = preview_bounds.y + (int)(preview_bounds.h * 0.75f);
-	gfx_rect_t info_area = { preview_bounds.x + panel_padding, info_y,
-	                         preview_bounds.w - panel_padding * 2, preview_bounds.h - (info_y - preview_bounds.y) };
+	// Game info area - Analogue-style detailed view
+	int info_y = boxart_bottom + 10;
+	int info_x = preview_bounds.x + panel_padding;
+	int info_width = preview_bounds.w - panel_padding * 2;
+	int line_height = 28;
 
-	// Game title placeholder
-	gfx_rect_t title_bar = { info_area.x, info_area.y, info_area.w, 24 };
-	draw_filled_rect(canvas, title_bar, theme->colors.text_primary);
+	// Game title (larger, prominent)
+	int title_width = strlen(selected->name) * 12;
+	if (title_width > info_width) title_width = info_width;
+	gfx_rect_t title_bar = { info_x, info_y, title_width, 28 };
+	draw_filled_rect(canvas, title_bar, theme->colors.text_highlight);
+	info_y += 36;
 
-	// Description placeholder
-	if (selected->description[0])
+	// Separator line
+	gfx_rect_t sep = { info_x, info_y, info_width, 1 };
+	draw_filled_rect(canvas, sep, theme->colors.panel_border);
+	info_y += 12;
+
+	// Try to get game metadata from database
+	gamedb_entry_t *game_info = NULL;
+	if (cfg.gamedb_enable && selected->path[0])
 	{
-		gfx_rect_t desc_bar = { info_area.x, info_area.y + 32, info_area.w, 16 };
-		draw_filled_rect(canvas, desc_bar, theme->colors.text_secondary);
+		game_info = gamedb_lookup_filename(selected->path);
+	}
+
+	// Developer / Publisher row
+	if (game_info && (game_info->developer[0] || game_info->publisher[0]))
+	{
+		// Label
+		gfx_rect_t label = { info_x, info_y + 4, 80, 16 };
+		draw_filled_rect(canvas, label, theme->colors.text_secondary);
+
+		// Value
+		const char *dev = game_info->developer[0] ? game_info->developer : game_info->publisher;
+		int dev_width = strlen(dev) * 8;
+		if (dev_width > info_width - 100) dev_width = info_width - 100;
+		gfx_rect_t value = { info_x + 90, info_y + 4, dev_width, 16 };
+		draw_filled_rect(canvas, value, theme->colors.text_primary);
+		info_y += line_height;
+	}
+
+	// Year / Region row
+	if (game_info && (game_info->year > 0 || game_info->region != REGION_UNKNOWN))
+	{
+		// Year
+		if (game_info->year > 0)
+		{
+			gfx_rect_t year_label = { info_x, info_y + 4, 40, 16 };
+			draw_filled_rect(canvas, year_label, theme->colors.text_secondary);
+
+			gfx_rect_t year_val = { info_x + 50, info_y + 4, 40, 16 };
+			draw_filled_rect(canvas, year_val, theme->colors.text_primary);
+		}
+
+		// Region
+		if (game_info->region != REGION_UNKNOWN)
+		{
+			int region_x = info_x + 120;
+			gfx_rect_t region_label = { region_x, info_y + 4, 50, 16 };
+			draw_filled_rect(canvas, region_label, theme->colors.text_secondary);
+
+			const char *region_name = gamedb_region_name(game_info->region);
+			int region_width = strlen(region_name) * 8;
+			gfx_rect_t region_val = { region_x + 60, info_y + 4, region_width, 16 };
+			draw_filled_rect(canvas, region_val, theme->colors.text_primary);
+		}
+
+		// Players
+		if (game_info->players_max > 0)
+		{
+			int players_x = info_x + info_width - 80;
+			gfx_rect_t players_val = { players_x, info_y + 4, 70, 16 };
+			draw_filled_rect(canvas, players_val, theme->colors.text_secondary);
+		}
+		info_y += line_height;
+	}
+
+	// Playtime section (Analogue Library inspired)
+	playtime_entry_t *playtime = playtime_get_entry(selected->path);
+	if (playtime && playtime->total_seconds > 0)
+	{
+		// Separator
+		gfx_rect_t sep2 = { info_x, info_y, info_width, 1 };
+		draw_filled_rect(canvas, sep2, theme->colors.panel_border);
+		info_y += 12;
+
+		// Playtime label and value
+		gfx_rect_t pt_label = { info_x, info_y + 4, 70, 16 };
+		draw_filled_rect(canvas, pt_label, theme->colors.text_secondary);
+
+		char playtime_str[32];
+		playtime_format_duration(playtime->total_seconds, playtime_str, sizeof(playtime_str));
+		int pt_width = strlen(playtime_str) * 10;
+		gfx_rect_t pt_val = { info_x + 80, info_y + 4, pt_width, 16 };
+		draw_filled_rect(canvas, pt_val, theme->colors.text_primary);
+		info_y += line_height;
+
+		// Last played
+		if (playtime->last_played > 0)
+		{
+			gfx_rect_t lp_label = { info_x, info_y + 4, 90, 16 };
+			draw_filled_rect(canvas, lp_label, theme->colors.text_secondary);
+
+			char last_played_str[64];
+			playtime_format_relative_time(playtime->last_played, last_played_str, sizeof(last_played_str));
+			int lp_width = strlen(last_played_str) * 8;
+			gfx_rect_t lp_val = { info_x + 100, info_y + 4, lp_width, 16 };
+			draw_filled_rect(canvas, lp_val, theme->colors.text_primary);
+			info_y += line_height;
+		}
+
+		// Play count
+		if (playtime->play_count > 1)
+		{
+			gfx_rect_t pc_label = { info_x, info_y + 4, 80, 16 };
+			draw_filled_rect(canvas, pc_label, theme->colors.text_secondary);
+
+			char count_str[16];
+			snprintf(count_str, sizeof(count_str), "%u times", playtime->play_count);
+			int pc_width = strlen(count_str) * 8;
+			gfx_rect_t pc_val = { info_x + 90, info_y + 4, pc_width, 16 };
+			draw_filled_rect(canvas, pc_val, theme->colors.text_primary);
+		}
 	}
 }
 
@@ -1206,59 +1475,280 @@ static void render_search_overlay(Imlib_Image canvas)
 	}
 }
 
+// Render Zaparoo card scan overlay
+static void render_zaparoo_overlay(Imlib_Image canvas)
+{
+	if (!zaparoo_overlay_active()) return;
+
+	gfx_theme_t *theme = menu_state.theme;
+	zaparoo_overlay_t *overlay = zaparoo_get_overlay();
+
+	// Full-screen semi-transparent background
+	gfx_rect_t bg_overlay = { 0, 0, fb_width, fb_height };
+	gfx_color_t bg_color = gfx_color_hex(0xE0000000);
+	draw_filled_rect(canvas, bg_overlay, bg_color);
+
+	// Center card dimensions
+	int card_width = 420;
+	int card_height = 520;
+	int card_x = (fb_width - card_width) / 2;
+	int card_y = (fb_height - card_height) / 2 - 20;
+
+	// Card background with selection border
+	gfx_rect_t card = { card_x, card_y, card_width, card_height };
+	draw_filled_rect(canvas, card, theme->colors.panel_bg);
+	draw_rect_border(canvas, card, theme->colors.selection_border, 3);
+
+	// Header bar with "NFC DETECTED" or "ZAPAROO"
+	int header_h = 50;
+	gfx_rect_t header = { card_x, card_y, card_width, header_h };
+	draw_filled_rect(canvas, header, theme->colors.selection_bg);
+
+	// NFC icon in header
+	draw_nfc_icon(canvas, card_x + 15, card_y + 10, 30, theme->colors.text_highlight);
+
+	// "ZAPAROO" title placeholder
+	gfx_rect_t title_text = { card_x + 55, card_y + 17, 100, 16 };
+	draw_filled_rect(canvas, title_text, theme->colors.text_highlight);
+
+	// Boxart area (centered in card)
+	int art_w = 280;
+	int art_h = 280;
+	int art_x = card_x + (card_width - art_w) / 2;
+	int art_y = card_y + header_h + 30;
+
+	// Try to get boxart for the game
+	// For now, just draw a placeholder
+	gfx_rect_t art_rect = { art_x, art_y, art_w, art_h };
+	gfx_color_t art_bg = gfx_color_hex(0xFF2a2a3a);
+	draw_filled_rect(canvas, art_rect, art_bg);
+	draw_rect_border(canvas, art_rect, theme->colors.panel_border, 2);
+
+	// Game icon placeholder in center of art area
+	int icon_size = 80;
+	gfx_rect_t icon = { art_x + (art_w - icon_size) / 2,
+	                    art_y + (art_h - icon_size) / 2,
+	                    icon_size, icon_size };
+	draw_filled_rect(canvas, icon, theme->colors.panel_border);
+
+	// Game title area
+	int title_y = art_y + art_h + 25;
+	const char *game_name = overlay->card.game_name;
+	if (game_name[0])
+	{
+		// Draw game name text
+		gfx_draw_text(canvas, game_name, card_x + 20, title_y, theme->colors.text_primary);
+	}
+	else
+	{
+		// Placeholder
+		gfx_rect_t name_placeholder = { card_x + 30, title_y, 250, 20 };
+		draw_filled_rect(canvas, name_placeholder, theme->colors.text_primary);
+	}
+
+	// Loading indicator / progress bar
+	int progress_y = card_y + card_height - 40;
+	int progress_w = card_width - 80;
+	int progress_h = 8;
+	int progress_x = card_x + 40;
+
+	// Progress background
+	gfx_rect_t progress_bg = { progress_x, progress_y, progress_w, progress_h };
+	gfx_color_t progress_bg_color = gfx_color_hex(0xFF1a1a2a);
+	draw_filled_rect(canvas, progress_bg, progress_bg_color);
+
+	// Animated progress fill (simple pulse effect)
+	static int progress_phase = 0;
+	progress_phase = (progress_phase + 3) % 100;
+	int fill_w = (progress_w * progress_phase) / 100;
+	gfx_rect_t progress_fill = { progress_x, progress_y, fill_w, progress_h };
+	draw_filled_rect(canvas, progress_fill, theme->colors.selection_border);
+
+	// "Loading..." text placeholder
+	gfx_rect_t loading_text = { card_x + (card_width - 80) / 2,
+	                            progress_y + progress_h + 10, 80, 14 };
+	draw_filled_rect(canvas, loading_text, theme->colors.text_secondary);
+}
+
 // Main render function
 void gfx_menu_render(void)
 {
+	static Imlib_Image render_buffer = NULL;
+	static int last_width = 0, last_height = 0;
+	static unsigned long last_render_time = 0;
+
 	if (!menu_state.enabled) return;
-	if (!menu_state.needs_redraw) return;
-	if (!fb_base || fb_width <= 0 || fb_height <= 0) return;
 
-	// Create canvas image from framebuffer
-	Imlib_Image canvas = imlib_create_image_using_data(fb_width, fb_height,
-		(uint32_t*)(fb_base + (1920*1080 * 1)));  // Use first background buffer
+	// Check if we should show graphical menu or let OSD show
+	// (e.g., when in System Settings, OSD should be visible)
+	if (!menu_use_graphical())
+	{
+		// Let OSD show instead - disable our framebuffer
+		video_fb_enable(0, 0);
+		return;
+	}
 
-	if (!canvas) return;
+	// If framebuffer isn't ready yet, keep needs_redraw true so we try again later
+	if (!fb_base || fb_width <= 0 || fb_height <= 0) {
+		menu_state.needs_redraw = 1;  // Try again next frame
+		return;
+	}
 
-	imlib_context_set_image(canvas);
+	// Frame rate limiter: max ~30fps (33ms between frames) to reduce CPU load
+	unsigned long now = GetTimer(0);
+	if (now - last_render_time < 33 && !menu_state.needs_redraw) {
+		// Just keep current buffer displayed, skip expensive work
+		video_fb_enable(1, gfx_fb_front);
+		OsdDisable();
+		return;
+	}
+	last_render_time = now;
+	// Create or recreate render buffer if size changed
+	if (!render_buffer || last_width != fb_width || last_height != fb_height) {
+		if (render_buffer) {
+			imlib_context_set_image(render_buffer);
+			imlib_free_image();
+		}
+		render_buffer = imlib_create_image(fb_width, fb_height);
+		if (!render_buffer) return;
+		last_width = fb_width;
+		last_height = fb_height;
+		menu_state.needs_redraw = 1;  // Force redraw on size change
+	}
+	
+	// Only do expensive re-render when content changed
+	if (menu_state.needs_redraw)
+	{
+		Imlib_Image canvas = render_buffer;
+
+		imlib_context_set_image(canvas);
+		imlib_image_set_has_alpha(1);
+
+		// Fill background
+		gfx_theme_t *theme = menu_state.theme;
+		gfx_rect_t full_screen = { 0, 0, fb_width, fb_height };
+		draw_filled_rect(canvas, full_screen, theme->colors.background);
+
+		// Render blurred boxart as background (if available)
+		Imlib_Image boxart = boxart_get_preview_image();
+		if (boxart)
+		{
+			apply_blur_background(canvas, boxart);
+		}
+
+		// Render UI elements based on view type
+		switch (menu_state.view_type)
+		{
+			case GFX_VIEW_LIST:
+				render_list_view(canvas);
+				render_preview_panel(canvas);
+				break;
+			case GFX_VIEW_GRID:
+				render_grid_view(canvas);
+				break;
+			case GFX_VIEW_WHEEL:
+				render_wheel_view(canvas);
+				break;
+			default:
+				render_list_view(canvas);
+				break;
+		}
+
+		render_header(canvas);
+		render_footer(canvas);
+
+		// Render search overlay on top of everything
+		render_search_overlay(canvas);
+
+		// Render Zaparoo card scan overlay (topmost)
+		render_zaparoo_overlay(canvas);
+
+		// Copy rendered image to framebuffer (back buffer)
+		imlib_context_set_image(canvas);
+		uint32_t *src_data = imlib_image_get_data_for_reading_only();
+		const int back = (gfx_fb_front == GFX_FB_A) ? GFX_FB_B : GFX_FB_A;
+		volatile uint32_t *dst_data = fb_base + (FB_SIZE * back);
+		if (src_data && dst_data) {
+			memcpy((void*)dst_data, src_data, fb_width * fb_height * 4);
+		}
+
+		menu_state.needs_redraw = 0;
+		
+		// Swap buffers
+		video_fb_enable(1, back);
+		gfx_fb_front = back;
+	}
+	else
+	{
+		// Just keep our buffer displayed (no re-render needed)
+		video_fb_enable(1, gfx_fb_front);
+	}
+	
+	OsdDisable();
+}
+
+// Save current graphical menu to PNG file for testing/preview
+int gfx_menu_save_preview(const char *filename)
+{
+	if (!menu_state.enabled) return -1;
+
+	// Create a test image if framebuffer not available
+	int width = (fb_width > 0) ? fb_width : 1920;
+	int height = (fb_height > 0) ? fb_height : 1080;
+
+	Imlib_Image preview = imlib_create_image(width, height);
+	if (!preview) return -2;
+
+	imlib_context_set_image(preview);
 	imlib_image_set_has_alpha(1);
 
 	// Fill background
 	gfx_theme_t *theme = menu_state.theme;
-	gfx_rect_t full_screen = { 0, 0, fb_width, fb_height };
-	draw_filled_rect(canvas, full_screen, theme->colors.background);
+	gfx_rect_t full_screen = { 0, 0, width, height };
+	draw_filled_rect(preview, full_screen, theme->colors.background);
 
-	// Render blurred boxart as background (if available)
-	Imlib_Image boxart = boxart_get_preview_image();
-	if (boxart)
-	{
-		apply_blur_background(canvas, boxart);
-	}
+	// Temporarily set dimensions for rendering
+	int old_width = fb_width;
+	int old_height = fb_height;
+	fb_width = width;
+	fb_height = height;
 
-	// Render UI elements based on view type
+	// Render UI elements
 	switch (menu_state.view_type)
 	{
 		case GFX_VIEW_LIST:
-			render_list_view(canvas);
-			render_preview_panel(canvas);
+			render_list_view(preview);
+			render_preview_panel(preview);
 			break;
 		case GFX_VIEW_GRID:
-			render_grid_view(canvas);
+			render_grid_view(preview);
 			break;
 		case GFX_VIEW_WHEEL:
-			render_wheel_view(canvas);
+			render_wheel_view(preview);
 			break;
 		default:
-			render_list_view(canvas);
+			render_list_view(preview);
 			break;
 	}
 
-	render_header(canvas);
-	render_footer(canvas);
+	render_header(preview);
+	render_footer(preview);
 
-	// Render search overlay on top of everything
-	render_search_overlay(canvas);
+	// Render overlays
+	render_search_overlay(preview);
+	render_zaparoo_overlay(preview);
 
-	menu_state.needs_redraw = 0;
+	// Restore dimensions
+	fb_width = old_width;
+	fb_height = old_height;
+
+	// Save to file
+	imlib_context_set_image(preview);
+	Imlib_Load_Error err;
+	imlib_save_image_with_error_return(filename, &err);
+	imlib_free_image();
+
+	return (err == IMLIB_LOAD_ERROR_NONE) ? 0 : -3;
 }
 
 // Apply blurred boxart as background
@@ -1330,16 +1820,69 @@ int gfx_menu_handle_input(int key)
 
 void gfx_draw_text(Imlib_Image img, const char *text, int x, int y, gfx_color_t color)
 {
-	// TODO: Implement proper text rendering using Imlib2 fonts
-	// For now, this is a placeholder that draws a colored bar
+	// Render using MiSTer's built-in 8x8 bitmap font (charfont), scaled 2x for readability.
 	if (!text || !img) return;
 
-	int len = strlen(text);
-	gfx_rect_t text_rect = { x, y, len * 8, 16 };
+	const int scale = 2;
 
 	imlib_context_set_image(img);
-	set_imlib_color(color);
-	imlib_image_fill_rectangle(text_rect.x, text_rect.y, text_rect.w, text_rect.h);
+	int w = imlib_image_get_width();
+	int h = imlib_image_get_height();
+	if (w <= 0 || h <= 0) return;
+
+	uint32_t *data = (uint32_t*)imlib_image_get_data();
+	if (!data) return;
+
+	const uint32_t pix = ((uint32_t)color.a << 24) | ((uint32_t)color.r << 16) | ((uint32_t)color.g << 8) | (uint32_t)color.b;
+	int cx = x;
+
+	for (const unsigned char *p = (const unsigned char*)text; *p; ++p)
+	{
+		unsigned char ch = *p;
+		if (ch == '\n')
+		{
+			cx = x;
+			y += 8 * scale + 2;
+			continue;
+		}
+
+		// simple tab
+		if (ch == '\t')
+		{
+			cx += 4 * 8 * scale;
+			continue;
+		}
+
+		// charfont stores columns, not rows: charfont[ch][col] has bits for rows 0-7
+		for (int col = 0; col < 8; col++)
+		{
+			unsigned char bits = charfont[ch][col];
+			for (int row = 0; row < 8; row++)
+			{
+				if (bits & (1 << row))  // bit N = row N
+				{
+					int px0 = cx + col * scale;
+					int py0 = y + row * scale;
+					for (int sy = 0; sy < scale; sy++)
+					{
+						int py = py0 + sy;
+						if (py < 0 || py >= h) continue;
+						uint32_t *rowp = data + py * w;
+						for (int sx = 0; sx < scale; sx++)
+						{
+							int px = px0 + sx;
+							if (px < 0 || px >= w) continue;
+							rowp[px] = pix;
+						}
+					}
+				}
+			}
+		}
+
+		cx += 8 * scale;
+	}
+
+	imlib_image_put_back_data((DATA32*)data);
 }
 
 //// Core Settings Menu Rendering ////

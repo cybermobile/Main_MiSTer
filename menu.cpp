@@ -66,6 +66,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "profiling.h"
 #include "boxart.h"
 #include "gamedb.h"
+#include "gfx_menu.h"
+#include "theme.h"
+#include "search.h"
+#include "scraper.h"
 
 /*menu states*/
 enum MENU
@@ -129,6 +133,10 @@ enum MENU
 	MENU_SCRIPTS1,
 	MENU_SCRIPTS_FB,
 	MENU_SCRIPTS_FB2,
+
+	MENU_SCRAPER1,
+	MENU_SCRAPER2,
+	MENU_SCRAPER_RUNNING,
 
 	MENU_DOC_FILE_SELECTED,
 	MENU_DOC_FILE_SELECTED_2,
@@ -923,6 +931,107 @@ static int next_ar(int ar, int minus)
 
 static int joymap_first = 0;
 
+// Sync file list to graphical menu system
+static void gfx_menu_sync_file_list(const char *title)
+{
+	printf("GFX: gfx_menu_sync_file_list called, gfx_menu_is_enabled=%d\n", gfx_menu_is_enabled());
+	if (!gfx_menu_is_enabled()) return;
+
+	printf("GFX: Syncing file list, title='%s'\n", title ? title : "NULL");
+	gfx_menu_clear_items();
+	gfx_menu_set_title(title ? title : "");
+
+	// Extract system name from current browsing path for boxart lookups
+	// Path format: /media/fat/games/SNES or similar
+	char *current_path = HomeDir();
+	printf("GFX: HomeDir() = '%s'\n", current_path ? current_path : "NULL");
+	if (current_path)
+	{
+		// Find the last directory component of the path
+		char *last_slash = strrchr(current_path, '/');
+		if (last_slash && last_slash[1])
+		{
+			printf("GFX: Setting boxart core from path '%s' -> '%s'\n", current_path, last_slash + 1);
+			boxart_set_core(last_slash + 1);
+		}
+		else if (current_path[0])
+		{
+			printf("GFX: Setting boxart core to '%s'\n", current_path);
+			boxart_set_core(current_path);
+		}
+	}
+
+	int count = flist_nDirEntries();
+	int selected = flist_iSelectedEntry();
+
+	for (int i = 0; i < count; i++)
+	{
+		direntext_t *item = flist_DirItem(i);
+		if (!item) continue;
+
+		gfx_item_type_t type;
+		if (item->de.d_type == DT_DIR)
+		{
+			if (strcmp(item->de.d_name, "..") == 0)
+				type = GFX_ITEM_BACK;
+			else
+				type = GFX_ITEM_FOLDER;
+		}
+		else
+		{
+			type = GFX_ITEM_GAME;
+		}
+
+		int idx = gfx_menu_add_item(item->altname, item->de.d_name, type);
+
+		// Load thumbnails for items near selection (lazy loading)
+		// Only load thumbnails within 10 items of selection for performance
+		if (type == GFX_ITEM_GAME && idx >= 0)
+		{
+			int distance = (i > selected) ? (i - selected) : (selected - i);
+			if (distance <= 10)
+			{
+				printf("GFX: Trying to load thumbnail for '%s' (boxart_enable=%d)\n", item->de.d_name, cfg.boxart_enable);
+				boxart_result_t result;
+				if (boxart_load_any(item->de.d_name, &result))
+				{
+					printf("GFX: SUCCESS - Loaded thumbnail for '%s' (size=%dx%d)\n", item->de.d_name, result.width, result.height);
+					gfx_menu_set_item_thumbnail(idx, result.image);
+				}
+				else
+				{
+					printf("GFX: FAILED - No boxart found for '%s'\n", item->de.d_name);
+				}
+			}
+		}
+	}
+
+	// Sync selection
+	gfx_menu_select_index(selected);
+	gfx_menu_invalidate();
+}
+
+// Update gfx_menu selection when classic menu changes
+// Called from main loop to sync graphical menu with classic menu state
+void gfx_menu_sync_from_classic(void)
+{
+	if (!gfx_menu_is_enabled()) return;
+
+	int selected = flist_iSelectedEntry();
+	if (gfx_menu_get_selected_index() != selected)
+	{
+		gfx_menu_select_index(selected);
+		gfx_menu_invalidate();  // Trigger redraw when selection changes
+	}
+
+	// Update boxart preview for current selection
+	direntext_t *item = flist_SelectedItem();
+	if (item && item->de.d_type != DT_DIR)
+	{
+		boxart_set_preview(item->de.d_name);
+	}
+}
+
 static int gun_x = 0;
 static int gun_y = 0;
 static int gun_ok = 0;
@@ -1220,6 +1329,30 @@ void HandleUI(void)
 			break;
 		case KEY_GRAVE:
 			recent = true;
+			break;
+
+		// Graphical menu shortcuts
+		case KEY_V:
+			// Toggle view mode in graphical menu (List/Grid/Wheel)
+			if (gfx_menu_is_enabled() && menu_use_graphical())
+			{
+				gfx_menu_cycle_view();
+			}
+			break;
+		case KEY_TAB:
+			// Toggle graphical menu on/off
+			if (is_menu())
+			{
+				cfg.gfx_menu_enable = !cfg.gfx_menu_enable;
+				gfx_menu_set_enabled(cfg.gfx_menu_enable);
+			}
+			break;
+		case KEY_SLASH:
+			// Open search in graphical menu
+			if (gfx_menu_is_enabled() && menu_use_graphical())
+			{
+				search_toggle();
+			}
 			break;
 		}
 	}
@@ -2852,7 +2985,10 @@ void HandleUI(void)
 			}
 		}
 
-		if(!hold_cnt && reboot_req) fpga_load_rbf("menu.rbf");
+		if(!hold_cnt && reboot_req) {
+			if (gfx_menu_is_enabled()) gfx_menu_set_enabled(0);
+			fpga_load_rbf("menu.rbf");
+		}
 		break;
 
 	case MENU_VIDEOPROC1:
@@ -5063,6 +5199,9 @@ void HandleUI(void)
 			}
 		}
 
+		// Sync to graphical menu system
+		gfx_menu_sync_file_list((fs_Options & SCANO_CORES) ? "Cores" : "Select");
+
 		if (cfg.log_file_entry && flist_nDirEntries())
 		{
 			//Write out paths infos for external integration
@@ -6437,7 +6576,7 @@ void HandleUI(void)
 
 		m = 0;
 		OsdSetTitle("System Settings", OSD_ARROW_LEFT);
-		menumask = 0x7F;
+		menumask = 0x3FF;  // 10 menu items
 
 		OsdWrite(m++);
 		sprintf(s, "       MiSTer v%s", version + 5);
@@ -6489,16 +6628,24 @@ void HandleUI(void)
 		OsdWrite(m++, " Remap keyboard            \x16", menusub == 1);
 		OsdWrite(m++, " Define joystick buttons   \x16", menusub == 2);
 		OsdWrite(m++, " Scripts                   \x16", menusub == 3);
-		OsdWrite(m++, " Help                      \x16", menusub == 4);
+		sprintf(s, " Graphical Menu:      %s", cfg.gfx_menu_enable ? "On " : "Off");
+		OsdWrite(m++, s, menusub == 4);
+		{
+			theme_entry_t *current_theme = theme_get_current();
+			sprintf(s, " Theme:        %s", current_theme ? current_theme->meta.name : "Default");
+			OsdWrite(m++, s, menusub == 5);
+		}
+		OsdWrite(m++, " Scrape Artwork            \x16", menusub == 6);
+		OsdWrite(m++, " Help                      \x16", menusub == 7);
 		OsdWrite(m++, "");
 		cr = m;
-		OsdWrite(m++, " Reboot (hold \x16 cold reboot)", menusub == 5);
+		OsdWrite(m++, " Reboot (hold \x16 cold reboot)", menusub == 8);
 		sysinfo_timer = 0;
 
 		reboot_req = 0;
 
 		while(m < OsdGetSize()-1) OsdWrite(m++, "");
-		OsdWrite(15, STD_EXIT, menusub == 6);
+		OsdWrite(15, STD_EXIT, menusub == 9);
 		menustate = MENU_SYSTEM2;
 		break;
 
@@ -6554,12 +6701,38 @@ void HandleUI(void)
 				break;
 
 			case 4:
+				// Toggle graphical menu
+				cfg.gfx_menu_enable = !cfg.gfx_menu_enable;
+				gfx_menu_set_enabled(cfg.gfx_menu_enable);
+				menustate = MENU_SYSTEM1;
+				break;
+
+			case 5:
+				// Cycle to next theme
+				{
+					theme_list_t *list = theme_get_list();
+					if (list && list->count > 0)
+					{
+						int next = (list->selected_index + 1) % list->count;
+						theme_apply(next);
+					}
+					menustate = MENU_SYSTEM1;
+				}
+				break;
+
+			case 6:
+				// Scrape Artwork submenu
+				menustate = MENU_SCRAPER1;
+				menusub = 0;
+				break;
+
+			case 7:
 				strcpy(Selected_tmp, DOCS_DIR);
 				FileCreatePath(Selected_tmp);
 				SelectFile(Selected_tmp, "PDFTXTMD ", SCANO_DIR | SCANO_TXT, MENU_DOC_FILE_SELECTED, MENU_NONE1);
 				break;
 
-			case 5:
+			case 8:
 				{
 					reboot_req = 1;
 
@@ -6572,17 +6745,48 @@ void HandleUI(void)
 				}
 				break;
 
-			case 6:
+			case 9:
 				menustate = MENU_NONE1;
 				break;
 			}
 		}
 		else if (left)
 		{
-			menustate = MENU_MISC1;
+			if (menusub == 5)
+			{
+				// Cycle to previous theme
+				theme_list_t *list = theme_get_list();
+				if (list && list->count > 0)
+				{
+					int prev = (list->selected_index - 1 + list->count) % list->count;
+					theme_apply(prev);
+				}
+				menustate = MENU_SYSTEM1;
+			}
+			else
+			{
+				menustate = MENU_MISC1;
+			}
+		}
+		else if (right)
+		{
+			if (menusub == 5)
+			{
+				// Cycle to next theme
+				theme_list_t *list = theme_get_list();
+				if (list && list->count > 0)
+				{
+					int next = (list->selected_index + 1) % list->count;
+					theme_apply(next);
+				}
+				menustate = MENU_SYSTEM1;
+			}
 		}
 
-		if (!hold_cnt && reboot_req) fpga_load_rbf("menu.rbf");
+		if (!hold_cnt && reboot_req) {
+			if (gfx_menu_is_enabled()) gfx_menu_set_enabled(0);
+			fpga_load_rbf("menu.rbf");
+		}
 		break;
 
 	case MENU_JOYSYSMAP:
@@ -6761,6 +6965,190 @@ void HandleUI(void)
 				menusub = 3;
 				OsdClear();
 				OsdEnable(DISABLE_KEYBOARD);
+			}
+		}
+		break;
+
+		/******************************************************************/
+		/* Artwork Scraper menu */
+		/******************************************************************/
+	case MENU_SCRAPER1:
+		OsdSetSize(16);
+		helptext_idx = 0;
+		parentstate = menustate;
+		OsdSetTitle("Artwork Scraper", OSD_ARROW_LEFT);
+		menumask = 0x1F;  // 5 menu items
+
+		m = 0;
+		OsdWrite(m++);
+		OsdWrite(m++, "  Download game artwork from:");
+		OsdWrite(m++, "  ScreenScraper, TheGamesDB,");
+		OsdWrite(m++, "  or SteamGridDB");
+		OsdWrite(m++, "");
+
+		{
+			scraper_config_t *cfg = scraper_get_config();
+
+			// Show source status
+			sprintf(s, " ScreenScraper:    %s",
+				scraper_source_configured(SCRAPER_SOURCE_SCREENSCRAPER) ? "Ready" : "Not configured");
+			OsdWrite(m++, s);
+			sprintf(s, " TheGamesDB:       %s",
+				scraper_source_configured(SCRAPER_SOURCE_THEGAMESDB) ? "Ready" : "Not configured");
+			OsdWrite(m++, s);
+			sprintf(s, " SteamGridDB:      %s",
+				scraper_source_configured(SCRAPER_SOURCE_STEAMGRIDDB) ? "Ready" : "Not configured");
+			OsdWrite(m++, s);
+
+			OsdWrite(m++, "");
+			sprintf(s, " Auto-scrape:         %s", cfg->auto_scrape ? "On " : "Off");
+			OsdWrite(m++, s, menusub == 0);
+
+			OsdWrite(m++, "");
+			OsdWrite(m++, " Scrape Current System     \x16", menusub == 1);
+			OsdWrite(m++, " Scrape All Systems        \x16", menusub == 2);
+			OsdWrite(m++, "");
+			OsdWrite(m++, " Edit API Keys             \x16", menusub == 3);
+		}
+
+		while(m < OsdGetSize()-1) OsdWrite(m++, "");
+		OsdWrite(15, STD_EXIT, menusub == 4);
+		menustate = MENU_SCRAPER2;
+		break;
+
+	case MENU_SCRAPER2:
+		if (menu)
+		{
+			menustate = MENU_SYSTEM1;
+			menusub = 6;
+			break;
+		}
+		else if (select)
+		{
+			switch (menusub)
+			{
+			case 0:
+				// Toggle auto-scrape
+				{
+					scraper_config_t *cfg = scraper_get_config();
+					cfg->auto_scrape = !cfg->auto_scrape;
+					scraper_save_config();
+					menustate = MENU_SCRAPER1;
+				}
+				break;
+
+			case 1:
+				// Scrape current system (use boxart core name)
+				{
+					const char *core = boxart_get_core();
+					if (core && core[0])
+					{
+						scraper_scrape_system(core);
+						menustate = MENU_SCRAPER_RUNNING;
+					}
+					else
+					{
+						// No core loaded, show message
+						menustate = MENU_SCRAPER1;
+					}
+				}
+				break;
+
+			case 2:
+				// Scrape all systems
+				scraper_scrape_all();
+				menustate = MENU_SCRAPER_RUNNING;
+				break;
+
+			case 3:
+				// Edit API Keys - show info message
+				// For now, just tell user to edit config file
+				Info("Edit /media/fat/config/scraper.cfg");
+				menustate = MENU_SCRAPER1;
+				break;
+
+			case 4:
+				menustate = MENU_SYSTEM1;
+				menusub = 6;
+				break;
+			}
+		}
+		break;
+
+	case MENU_SCRAPER_RUNNING:
+		{
+			scraper_progress_t *prog = scraper_get_progress();
+			scraper_status_t status = scraper_get_status();
+
+			OsdSetTitle("Scraping...", 0);
+			m = 0;
+			OsdWrite(m++);
+
+			if (status == SCRAPER_RUNNING || status == SCRAPER_PAUSED)
+			{
+				sprintf(s, "  Progress: %d / %d", prog->processed, prog->total_games);
+				OsdWrite(m++, s);
+				sprintf(s, "  Found: %d  Downloaded: %d", prog->found, prog->downloaded);
+				OsdWrite(m++, s);
+				sprintf(s, "  Already had: %d  Failed: %d", prog->already_had, prog->failed);
+				OsdWrite(m++, s);
+				OsdWrite(m++, "");
+
+				if (prog->current_game[0])
+				{
+					char truncated[32];
+					strncpy(truncated, prog->current_game, 28);
+					truncated[28] = '\0';
+					sprintf(s, "  Current: %s", truncated);
+					OsdWrite(m++, s);
+				}
+
+				if (prog->eta_seconds > 0)
+				{
+					int mins = prog->eta_seconds / 60;
+					int secs = prog->eta_seconds % 60;
+					sprintf(s, "  ETA: %d:%02d", mins, secs);
+					OsdWrite(m++, s);
+				}
+			}
+			else if (status == SCRAPER_COMPLETE)
+			{
+				OsdWrite(m++, "  Scraping complete!");
+				OsdWrite(m++, "");
+				sprintf(s, "  Total: %d games", prog->total_games);
+				OsdWrite(m++, s);
+				sprintf(s, "  Downloaded: %d", prog->downloaded);
+				OsdWrite(m++, s);
+				sprintf(s, "  Already had: %d", prog->already_had);
+				OsdWrite(m++, s);
+				sprintf(s, "  Not found: %d", prog->failed);
+				OsdWrite(m++, s);
+			}
+			else if (status == SCRAPER_ERROR)
+			{
+				OsdWrite(m++, "  Scraping failed!");
+				OsdWrite(m++, "  Check configuration.");
+			}
+
+			while(m < OsdGetSize()-1) OsdWrite(m++, "");
+
+			if (status == SCRAPER_RUNNING)
+			{
+				OsdWrite(15, "           Stop", menusub == 0);
+			}
+			else
+			{
+				OsdWrite(15, STD_EXIT, menusub == 0);
+			}
+
+			if (select || menu)
+			{
+				if (status == SCRAPER_RUNNING)
+				{
+					scraper_stop();
+				}
+				menustate = MENU_SCRAPER1;
+				menusub = 0;
 			}
 		}
 		break;
@@ -6982,6 +7370,9 @@ void HandleUI(void)
 			}
 		}
 
+		// Disable graphical menu before loading core (restore VT, framebuffer, etc.)
+		if (gfx_menu_is_enabled()) gfx_menu_set_enabled(0);
+
 		if (isXmlName(Selected_tmp))
 		{
 			// find the RBF file from the XML
@@ -6994,6 +7385,8 @@ void HandleUI(void)
 		break;
 
 	case MENU_CORE_FILE_SELECTED2:
+		// Disable graphical menu before loading core
+		if (gfx_menu_is_enabled()) gfx_menu_set_enabled(0);
 		fpga_load_rbf(Selected_tmp, selPath);
 		menustate = MENU_NONE1;
 		break;
@@ -7053,6 +7446,8 @@ void HandleUI(void)
 						OsdWrite(14, s, 1, 0, 0, 0);
 						sprintf(str, "           Loading...");
 						OsdWrite(15, str, 1, 0);
+						// Disable graphical menu before loading boot core
+						if (gfx_menu_is_enabled()) gfx_menu_set_enabled(0);
 						isXmlName(cfg.bootcore) ? xml_load(getFullPath(cfg.bootcore)) : fpga_load_rbf(cfg.bootcore);
 					}
 				}
@@ -7400,6 +7795,26 @@ int menu_allow_cfg_switch()
 	}
 
 	return 0;
+}
+
+// Returns 1 if graphical menu should render (file browser mode)
+// Returns 0 if OSD should be shown instead (settings, config menus)
+int menu_use_graphical(void)
+{
+	// Only use graphical menu in file select state
+	switch (menustate)
+	{
+	case MENU_FILE_SELECT1:
+	case MENU_FILE_SELECT2:
+		return 1;
+	case MENU_NONE1:
+	case MENU_NONE2:
+		// Show graphical menu in idle state when enabled
+		return cfg.gfx_menu_enable;
+	default:
+		// For all other menu states (System Settings, configs, etc.), show OSD
+		return 0;
+	}
 }
 
 void menu_process_save()
