@@ -1,6 +1,13 @@
-# Main_MiSTer Main Binary and Wiki Repo
+# Custom MiSTer Frontend
 
-This repo serves as the home for the MiSTer Main binaries and the Wiki.
+A custom user experience for [MiSTer FPGA](https://github.com/MiSTer-devel/Main_MiSTer), featuring a modernized interface with multiple view modes and enhanced navigation.
+
+## Features
+
+- **Grid View** - Browse cores and games in a visual grid layout
+- **Wheel View** - Navigate with a carousel-style interface
+- **NFC/Zaparoo Support** - Integrated NFC card scanning with visual feedback
+- **Modern UI** - Refreshed visual design while maintaining MiSTer compatibility
 
 ## UI Preview
 
@@ -21,8 +28,10 @@ This repo serves as the home for the MiSTer Main binaries and the Wiki.
 ### Zaparoo Overlay
 ![Zaparoo Overlay](ui_preview/preview_zaparoo_overlay.png)
 
-For the purposes of getting google to crawl the wiki, here's a link to the (not for humans) [crawlable wiki](https://github-wiki-see.page/m/MiSTer-devel/Wiki_MiSTer/wiki)
+## Building
 
-If you're a human looking for the wiki, that's [here](https://github.com/MiSTer-devel/Wiki_MiSTer/wiki)
+To compile this application, follow the [MiSTer cross-compiling guide](https://mister-devel.github.io/MkDocs_MiSTer/developer/mistercompile/#general-prerequisites-for-arm-cross-compiling).
 
-To compile this application, read more about that [here](https://mister-devel.github.io/MkDocs_MiSTer/developer/mistercompile/#general-prerequisites-for-arm-cross-compiling)
+## Credits
+
+Based on the official [Main_MiSTer](https://github.com/MiSTer-devel/Main_MiSTer) project. For MiSTer documentation and wiki, see [here](https://github.com/MiSTer-devel/Wiki_MiSTer/wiki).
