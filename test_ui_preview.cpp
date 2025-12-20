@@ -20,8 +20,8 @@
 // Framebuffer stubs - used by gfx_menu.cpp
 static uint32_t fake_fb[1920 * 1080];
 volatile uint32_t *fb_base = fake_fb;
-int fb_width = 1280;
-int fb_height = 720;
+int fb_width = 1920;
+int fb_height = 1080;
 
 // Character font - provided by charrom.cpp (link with charrom.o)
 

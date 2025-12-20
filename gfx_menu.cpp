@@ -1206,15 +1206,22 @@ static void render_grid_view(Imlib_Image canvas)
 	gfx_theme_t *theme = menu_state.theme;
 	int panel_padding = theme->panel_padding;
 
-	// Grid parameters - larger cells for better boxart visibility
-	int cell_size = 220;
-	int cell_spacing = 12;
-	int cols = (fb_width - panel_padding * 2) / (cell_size + cell_spacing);
-	if (cols < 1) cols = 1;
-
+	// Grid parameters - dynamically sized for resolution
+	// Target: 6 columns at 1080p, scale proportionally
 	int content_y = HEADER_HEIGHT + panel_padding;
 	int content_height = fb_height - HEADER_HEIGHT - FOOTER_HEIGHT - panel_padding * 2;
+	int content_width = fb_width - panel_padding * 2;
+
+	// Calculate cell size based on target columns (6 for 1080p)
+	int target_cols = 6;
+	int cell_spacing = (int)(fb_width * 0.006f);  // ~12px at 1920
+	if (cell_spacing < 8) cell_spacing = 8;
+
+	int cell_size = (content_width - (target_cols + 1) * cell_spacing) / target_cols;
+	int cols = target_cols;
+
 	int rows_visible = content_height / (cell_size + cell_spacing);
+	if (rows_visible < 1) rows_visible = 1;
 	menu_state.visible_count = cols * rows_visible;
 
 	int x = panel_padding;
@@ -1282,13 +1289,16 @@ static void render_wheel_view(Imlib_Image canvas)
 {
 	gfx_theme_t *theme = menu_state.theme;
 
-	// Wheel parameters
+	// Wheel parameters - dynamically sized for resolution
+	// Scale based on screen height (reference: 720p)
+	float scale = (float)fb_height / 720.0f;
+
 	int center_x = fb_width / 2;
-	int center_y = fb_height / 2 - 40;  // Slightly above center
-	int wheel_radius = 280;             // Distance from center to items
-	int item_size_center = 280;         // Size of center (selected) item - BIGGER
-	int item_size_side = 100;           // Size of side items
-	int visible_items = 7;              // Number of visible items in wheel
+	int center_y = fb_height / 2 - (int)(40 * scale);  // Slightly above center
+	int wheel_radius = (int)(280 * scale);              // Distance from center to items
+	int item_size_center = (int)(280 * scale);          // Size of center (selected) item
+	int item_size_side = (int)(100 * scale);            // Size of side items
+	int visible_items = 7;                              // Number of visible items in wheel
 
 	// Calculate positions for wheel items
 	int half_visible = visible_items / 2;
@@ -1392,8 +1402,10 @@ static void render_wheel_view(Imlib_Image canvas)
 	gfx_menu_item_t *selected = gfx_menu_get_selected_item();
 	if (selected)
 	{
-		int title_y = center_y + wheel_radius / 2 + 100;
-		gfx_rect_t title_area = { center_x - 200, title_y, 400, 30 };
+		int title_y = center_y + wheel_radius / 2 + (int)(100 * scale);
+		int title_w = (int)(400 * scale);
+		int title_h = (int)(30 * scale);
+		gfx_rect_t title_area = { center_x - title_w / 2, title_y, title_w, title_h };
 		gfx_color_t title_bg = theme->colors.panel_bg;
 		title_bg.a = 200;
 		draw_filled_rect(canvas, title_area, title_bg);
@@ -1402,7 +1414,7 @@ static void render_wheel_view(Imlib_Image canvas)
 		int text_width = strlen(selected->name) * 16; // 16 pixels per char
 		int text_x = center_x - text_width / 2;
 		if (text_x < title_area.x + 10) text_x = title_area.x + 10;
-		gfx_draw_text_truncated(canvas, selected->name, text_x, title_y + 6, 380, theme->colors.text_highlight);
+		gfx_draw_text_truncated(canvas, selected->name, text_x, title_y + 6, title_w - 20, theme->colors.text_highlight);
 	}
 
 	// Update visible count for page navigation
@@ -1778,16 +1790,16 @@ static void render_home_screen(Imlib_Image canvas)
 	gfx_rect_t full_screen = { 0, 0, fb_width, fb_height };
 	draw_filled_rect(canvas, full_screen, theme->colors.background);
 
-	// Section layout parameters
-	int section_height = 200;      // Height of each section row
-	int card_width = 140;          // Width of each game card
-	int card_height = 160;         // Height of each game card
-	int card_spacing = 15;         // Space between cards
-	int section_padding = 25;      // Padding within section
-	int header_height = 35;        // Section header height
-
+	// Section layout parameters - dynamically sized to fit 4 sections on screen
 	int content_y = HEADER_HEIGHT + panel_padding;
 	int content_width = fb_width - panel_padding * 2;
+	int available_height = fb_height - HEADER_HEIGHT - FOOTER_HEIGHT - panel_padding * 2;
+	int section_height = available_height / HOME_SECTION_COUNT;
+	int card_height = section_height - 45;         // Leave room for header and spacing
+	int card_width = (int)(card_height * 0.85f);   // Slightly wider than tall
+	int card_spacing = 15;                          // Space between cards
+	int section_padding = 25;                       // Padding within section
+	int header_height = 32;                         // Section header height
 
 	// Render each section
 	for (int section = 0; section < HOME_SECTION_COUNT; section++)
@@ -2068,33 +2080,37 @@ static void render_zaparoo_overlay(Imlib_Image canvas)
 	gfx_color_t bg_color = gfx_color_hex(0xE0000000);
 	draw_filled_rect(canvas, bg_overlay, bg_color);
 
-	// Center card dimensions
-	int card_width = 420;
-	int card_height = 520;
+	// Dynamic scaling based on screen height (reference: 720p)
+	float scale = (float)fb_height / 720.0f;
+
+	// Center card dimensions - scaled for resolution
+	int card_width = (int)(420 * scale);
+	int card_height = (int)(520 * scale);
 	int card_x = (fb_width - card_width) / 2;
-	int card_y = (fb_height - card_height) / 2 - 20;
+	int card_y = (fb_height - card_height) / 2 - (int)(20 * scale);
 
 	// Card background with selection border
 	gfx_rect_t card = { card_x, card_y, card_width, card_height };
 	draw_filled_rect(canvas, card, theme->colors.panel_bg);
-	draw_rect_border(canvas, card, theme->colors.selection_border, 3);
+	draw_rect_border(canvas, card, theme->colors.selection_border, (int)(3 * scale));
 
 	// Header bar with "NFC DETECTED" or "ZAPAROO"
-	int header_h = 50;
+	int header_h = (int)(50 * scale);
 	gfx_rect_t header = { card_x, card_y, card_width, header_h };
 	draw_filled_rect(canvas, header, theme->colors.selection_bg);
 
 	// NFC icon in header
-	draw_nfc_icon(canvas, card_x + 15, card_y + 10, 30, theme->colors.text_highlight);
+	int icon_size = (int)(30 * scale);
+	draw_nfc_icon(canvas, card_x + (int)(15 * scale), card_y + (int)(10 * scale), icon_size, theme->colors.text_highlight);
 
 	// "ZAPAROO" title text
-	gfx_draw_text(canvas, "ZAPAROO", card_x + 55, card_y + 17, theme->colors.text_highlight);
+	gfx_draw_text(canvas, "ZAPAROO", card_x + (int)(55 * scale), card_y + (int)(17 * scale), theme->colors.text_highlight);
 
 	// Boxart area (centered in card)
-	int art_w = 280;
-	int art_h = 280;
+	int art_w = (int)(280 * scale);
+	int art_h = (int)(280 * scale);
 	int art_x = card_x + (card_width - art_w) / 2;
-	int art_y = card_y + header_h + 30;
+	int art_y = card_y + header_h + (int)(30 * scale);
 
 	// Try to get boxart for the game
 	Imlib_Image boxart = boxart_get_preview_image();
@@ -2118,28 +2134,29 @@ static void render_zaparoo_overlay(Imlib_Image canvas)
 		gfx_color_t art_bg = gfx_color_hex(0xFF2a2a3a);
 		draw_filled_rect(canvas, art_rect, art_bg);
 	}
-	draw_rect_border(canvas, art_rect, theme->colors.panel_border, 2);
+	draw_rect_border(canvas, art_rect, theme->colors.panel_border, (int)(2 * scale));
 
 	// Game title area
-	int title_y = art_y + art_h + 25;
+	int title_y = art_y + art_h + (int)(25 * scale);
 	const char *game_name = overlay->card.game_name;
 	if (game_name[0])
 	{
 		// Draw game name text
-		gfx_draw_text(canvas, game_name, card_x + 20, title_y, theme->colors.text_primary);
+		gfx_draw_text(canvas, game_name, card_x + (int)(20 * scale), title_y, theme->colors.text_primary);
 	}
 	else
 	{
 		// Placeholder
-		gfx_rect_t name_placeholder = { card_x + 30, title_y, 250, 20 };
+		gfx_rect_t name_placeholder = { card_x + (int)(30 * scale), title_y, (int)(250 * scale), (int)(20 * scale) };
 		draw_filled_rect(canvas, name_placeholder, theme->colors.text_primary);
 	}
 
 	// Loading indicator / progress bar
-	int progress_y = card_y + card_height - 40;
-	int progress_w = card_width - 80;
-	int progress_h = 8;
-	int progress_x = card_x + 40;
+	int progress_y = card_y + card_height - (int)(40 * scale);
+	int progress_w = card_width - (int)(80 * scale);
+	int progress_h = (int)(8 * scale);
+	if (progress_h < 4) progress_h = 4;
+	int progress_x = card_x + (int)(40 * scale);
 
 	// Progress background
 	gfx_rect_t progress_bg = { progress_x, progress_y, progress_w, progress_h };
@@ -2155,7 +2172,7 @@ static void render_zaparoo_overlay(Imlib_Image canvas)
 
 	// "Loading..." text
 	int loading_text_x = card_x + (card_width - 10 * 16) / 2; // Center "Loading..." (10 chars * 16px)
-	gfx_draw_text(canvas, "Loading...", loading_text_x, progress_y + progress_h + 10, theme->colors.text_secondary);
+	gfx_draw_text(canvas, "Loading...", loading_text_x, progress_y + progress_h + (int)(10 * scale), theme->colors.text_secondary);
 }
 
 // Main render function
