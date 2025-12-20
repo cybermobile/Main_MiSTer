@@ -23,12 +23,14 @@ volatile uint32_t *fb_base = fake_fb;
 int fb_width = 1280;
 int fb_height = 720;
 
-// Character font stub
-unsigned char charfont[256][8] = {0};
+// Character font - provided by charrom.cpp (link with charrom.o)
 
 // Config stub - must match cfg_t structure from cfg.h
 #include "cfg.h"
 cfg_t cfg = {0};
+
+// Stub for FileLoad (used by charrom.cpp's LoadFont)
+int FileLoad(const char* name, void* data, int size) { (void)name; (void)data; (void)size; return 0; }
 
 // C++ stubs for hardware functions (these have C++ linkage in headers)
 void video_fb_enable(int enable, int buffer) { (void)enable; (void)buffer; }
@@ -38,7 +40,38 @@ void OsdDisable(void) {}
 void user_io_osd_key_enable(char enable) { (void)enable; }
 unsigned long GetTimer(unsigned long offset) { return 1000 + offset; }
 int menu_use_graphical(void) { return 1; }
-Imlib_Image boxart_get_preview_image(void) { return NULL; }
+
+// Create a placeholder boxart image for preview
+static Imlib_Image placeholder_boxart = NULL;
+Imlib_Image boxart_get_preview_image(void) {
+    if (!placeholder_boxart) {
+        // Create a 300x400 placeholder image (typical boxart aspect ratio)
+        placeholder_boxart = imlib_create_image(300, 400);
+        if (placeholder_boxart) {
+            imlib_context_set_image(placeholder_boxart);
+
+            // Fill with a gradient-like game cover placeholder
+            imlib_context_set_color(40, 60, 100, 255);  // Dark blue background
+            imlib_image_fill_rectangle(0, 0, 300, 400);
+
+            // Add a border
+            imlib_context_set_color(80, 120, 180, 255);  // Lighter blue border
+            imlib_image_fill_rectangle(0, 0, 300, 8);    // Top
+            imlib_image_fill_rectangle(0, 392, 300, 8);  // Bottom
+            imlib_image_fill_rectangle(0, 0, 8, 400);    // Left
+            imlib_image_fill_rectangle(292, 0, 8, 400);  // Right
+
+            // Add center decoration (game icon placeholder)
+            imlib_context_set_color(60, 90, 140, 255);
+            imlib_image_fill_rectangle(100, 150, 100, 100);
+
+            // Inner highlight
+            imlib_context_set_color(100, 140, 200, 255);
+            imlib_image_fill_rectangle(120, 170, 60, 60);
+        }
+    }
+    return placeholder_boxart;
+}
 
 // C++ stubs for search
 int search_is_active(void) { return 0; }

@@ -28,6 +28,17 @@ A custom user experience for [MiSTer FPGA](https://github.com/MiSTer-devel/Main_
 ### Zaparoo Overlay
 ![Zaparoo Overlay](ui_preview/preview_zaparoo_overlay.png)
 
+## Controls
+
+| Button | Action |
+|--------|--------|
+| **D-Pad** | Navigate menus |
+| **A** | Select / Confirm |
+| **B** | Back / Cancel |
+| **Start** | Open menu |
+| **Select** | Toggle view mode |
+| **Menu/OSD** | System menu |
+
 ## Building
 
 To compile this application, follow the [MiSTer cross-compiling guide](https://mister-devel.github.io/MkDocs_MiSTer/developer/mistercompile/#general-prerequisites-for-arm-cross-compiling).

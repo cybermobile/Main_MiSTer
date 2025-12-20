@@ -118,6 +118,31 @@ static void set_imlib_color(gfx_color_t c)
 	imlib_context_set_color(c.r, c.g, c.b, c.a);
 }
 
+// Helper: Draw text with max width, truncating with "..." if needed
+// Font is 8x8 scaled 2x = 16 pixels per character
+static void gfx_draw_text_truncated(Imlib_Image img, const char *text, int x, int y, int max_width, gfx_color_t color)
+{
+	if (!text || !img || max_width <= 0) return;
+
+	const int char_width = 16; // 8 * 2 (scale factor)
+	int max_chars = max_width / char_width;
+	int text_len = strlen(text);
+
+	if (text_len <= max_chars) {
+		// Text fits, draw normally
+		gfx_draw_text(img, text, x, y, color);
+	} else if (max_chars > 3) {
+		// Truncate with ellipsis
+		char truncated[256];
+		int copy_len = max_chars - 3; // Leave room for "..."
+		if (copy_len > 255 - 3) copy_len = 255 - 3;
+		strncpy(truncated, text, copy_len);
+		truncated[copy_len] = '\0';
+		strcat(truncated, "...");
+		gfx_draw_text(img, truncated, x, y, color);
+	}
+}
+
 // Initialize default theme with Analogue-inspired minimalist style
 static void init_default_theme(void)
 {
@@ -728,15 +753,25 @@ static void render_footer(Imlib_Image canvas)
 	int width = fb_width;
 	int height = fb_height;
 
-	// Footer background
+	// Footer background (fully opaque to cover any overlapping content)
 	gfx_rect_t footer_rect = { 0, height - FOOTER_HEIGHT, width, FOOTER_HEIGHT };
 	gfx_color_t footer_bg = theme->colors.panel_bg;
-	footer_bg.a = 200;
+	footer_bg.a = 255;
 	draw_filled_rect(canvas, footer_rect, footer_bg);
 
 	// Top border
 	gfx_rect_t border_rect = { 0, height - FOOTER_HEIGHT, width, 2 };
 	draw_filled_rect(canvas, border_rect, theme->colors.panel_border);
+
+	// Controls hint text
+	// Font is 8x8 scaled 2x = 16px per char, footer is 50px tall
+	const char *controls = "[A] Select  [B] Back  [D-Pad] Navigate  [Select] View";
+	int text_height = 16; // 8 * 2 (scale factor)
+	int text_y = height - FOOTER_HEIGHT + (FOOTER_HEIGHT - text_height) / 2;
+	int text_x = 20; // Left padding
+
+	// Use primary text color for visibility
+	gfx_draw_text(canvas, controls, text_x, text_y, theme->colors.text_primary);
 }
 
 // Render scrollbar
@@ -827,26 +862,7 @@ static void render_list_view(Imlib_Image canvas)
 			draw_rect_border(canvas, sel_rect, theme->colors.selection_border, 2);
 		}
 
-		// Thumbnail
-		if (item->thumbnail)
-		{
-			imlib_context_set_image(canvas);
-			imlib_context_set_blend(1);
-			imlib_blend_image_onto_image(item->thumbnail, 1,
-				0, 0, thumb_size, thumb_size,
-				item_rect.x + 4, item_rect.y + 4,
-				thumb_size - 8, thumb_size - 8);
-		}
-		else
-		{
-			// Placeholder for missing thumbnail
-			gfx_rect_t thumb_rect = { item_rect.x + 4, item_rect.y + 4, thumb_size - 8, thumb_size - 8 };
-			gfx_color_t placeholder = theme->colors.panel_border;
-			placeholder.a = 100;
-			draw_filled_rect(canvas, thumb_rect, placeholder);
-		}
-
-		// Item type indicator (folder icon, etc.)
+		// Item type indicator (folder icon for folders/back only)
 		if (item->type == GFX_ITEM_FOLDER || item->type == GFX_ITEM_BACK)
 		{
 			gfx_rect_t folder_icon = { item_rect.x + 8, item_rect.y + thumb_size/2 - 8, 16, 16 };
@@ -860,12 +876,13 @@ static void render_list_view(Imlib_Image canvas)
 			draw_filled_rect(canvas, star, theme->colors.text_highlight);
 		}
 
-		// Name text
+		// Name text (truncated to fit within list panel)
 		gfx_color_t text_color = (item_idx == menu_state.selected_index) ?
 		                         theme->colors.text_highlight : theme->colors.text_primary;
-		int text_x = item_rect.x + thumb_size + 10;
-		int text_y = item_rect.y + 10;
-		gfx_draw_text(canvas, item->name, text_x, text_y, text_color);
+		int text_x = item_rect.x + 10; // No thumbnail, start text closer to left
+		int text_y = item_rect.y + (thumb_size - 16) / 2; // Vertically center text
+		int text_max_width = list_width - text_x - SCROLLBAR_WIDTH - 10; // Leave room for scrollbar
+		gfx_draw_text_truncated(canvas, item->name, text_x, text_y, text_max_width, text_color);
 
 		y += item_height;
 	}
@@ -969,23 +986,11 @@ static void render_preview_panel(Imlib_Image canvas)
 		boxart_bottom = dst_y + dst_h + panel_padding;
 	}
 
-	// Game info area - Analogue-style detailed view
+	// Game info area - description below boxart
 	int info_y = boxart_bottom + 10;
 	int info_x = preview_bounds.x + panel_padding;
 	int info_width = preview_bounds.w - panel_padding * 2;
-	int line_height = 28;
-
-	// Game title (larger, prominent)
-	int title_width = strlen(selected->name) * 12;
-	if (title_width > info_width) title_width = info_width;
-	gfx_rect_t title_bar = { info_x, info_y, title_width, 28 };
-	draw_filled_rect(canvas, title_bar, theme->colors.text_highlight);
-	info_y += 36;
-
-	// Separator line
-	gfx_rect_t sep = { info_x, info_y, info_width, 1 };
-	draw_filled_rect(canvas, sep, theme->colors.panel_border);
-	info_y += 12;
+	int line_height = 20; // Line height for description text
 
 	// Try to get game metadata from database
 	gamedb_entry_t *game_info = NULL;
@@ -994,56 +999,33 @@ static void render_preview_panel(Imlib_Image canvas)
 		game_info = gamedb_lookup_filename(selected->path);
 	}
 
-	// Developer / Publisher row
-	if (game_info && (game_info->developer[0] || game_info->publisher[0]))
+	// Show game description if available
+	if (game_info && game_info->description[0])
 	{
-		// Label
-		gfx_rect_t label = { info_x, info_y + 4, 80, 16 };
-		draw_filled_rect(canvas, label, theme->colors.text_secondary);
-
-		// Value
-		const char *dev = game_info->developer[0] ? game_info->developer : game_info->publisher;
-		int dev_width = strlen(dev) * 8;
-		if (dev_width > info_width - 100) dev_width = info_width - 100;
-		gfx_rect_t value = { info_x + 90, info_y + 4, dev_width, 16 };
-		draw_filled_rect(canvas, value, theme->colors.text_primary);
-		info_y += line_height;
+		// Render description text (word-wrapped would be ideal, but for now truncate per line)
+		gfx_draw_text_truncated(canvas, game_info->description, info_x, info_y, info_width, theme->colors.text_secondary);
+		info_y += line_height * 2;
 	}
 
-	// Year / Region row
-	if (game_info && (game_info->year > 0 || game_info->region != REGION_UNKNOWN))
+	// Developer / Year info on one line
+	if (game_info && (game_info->developer[0] || game_info->year > 0))
 	{
-		// Year
+		char info_line[256] = "";
+		if (game_info->developer[0])
+		{
+			snprintf(info_line, sizeof(info_line), "%s", game_info->developer);
+		}
 		if (game_info->year > 0)
 		{
-			gfx_rect_t year_label = { info_x, info_y + 4, 40, 16 };
-			draw_filled_rect(canvas, year_label, theme->colors.text_secondary);
-
-			gfx_rect_t year_val = { info_x + 50, info_y + 4, 40, 16 };
-			draw_filled_rect(canvas, year_val, theme->colors.text_primary);
+			char year_str[16];
+			snprintf(year_str, sizeof(year_str), info_line[0] ? " (%d)" : "%d", game_info->year);
+			strncat(info_line, year_str, sizeof(info_line) - strlen(info_line) - 1);
 		}
-
-		// Region
-		if (game_info->region != REGION_UNKNOWN)
+		if (info_line[0])
 		{
-			int region_x = info_x + 120;
-			gfx_rect_t region_label = { region_x, info_y + 4, 50, 16 };
-			draw_filled_rect(canvas, region_label, theme->colors.text_secondary);
-
-			const char *region_name = gamedb_region_name(game_info->region);
-			int region_width = strlen(region_name) * 8;
-			gfx_rect_t region_val = { region_x + 60, info_y + 4, region_width, 16 };
-			draw_filled_rect(canvas, region_val, theme->colors.text_primary);
+			gfx_draw_text_truncated(canvas, info_line, info_x, info_y, info_width, theme->colors.text_secondary);
+			info_y += line_height;
 		}
-
-		// Players
-		if (game_info->players_max > 0)
-		{
-			int players_x = info_x + info_width - 80;
-			gfx_rect_t players_val = { players_x, info_y + 4, 70, 16 };
-			draw_filled_rect(canvas, players_val, theme->colors.text_secondary);
-		}
-		info_y += line_height;
 	}
 
 	// Playtime section (Analogue Library inspired)
@@ -1101,9 +1083,9 @@ static void render_grid_view(Imlib_Image canvas)
 	gfx_theme_t *theme = menu_state.theme;
 	int panel_padding = theme->panel_padding;
 
-	// Grid parameters
-	int cell_size = 160;
-	int cell_spacing = 16;
+	// Grid parameters - larger cells for better boxart visibility
+	int cell_size = 220;
+	int cell_spacing = 12;
 	int cols = (fb_width - panel_padding * 2) / (cell_size + cell_spacing);
 	if (cols < 1) cols = 1;
 
@@ -1134,13 +1116,18 @@ static void render_grid_view(Imlib_Image canvas)
 		// Cell background
 		draw_filled_rect(canvas, cell, theme->colors.panel_bg);
 
-		// Thumbnail
-		if (item->thumbnail)
+		// Thumbnail or placeholder boxart
+		Imlib_Image thumb = item->thumbnail ? item->thumbnail : boxart_get_preview_image();
+		if (thumb)
 		{
+			imlib_context_set_image(thumb);
+			int src_w = imlib_image_get_width();
+			int src_h = imlib_image_get_height();
+
 			imlib_context_set_image(canvas);
 			imlib_context_set_blend(1);
-			imlib_blend_image_onto_image(item->thumbnail, 1,
-				0, 0, cell_size, cell_size,
+			imlib_blend_image_onto_image(thumb, 1,
+				0, 0, src_w, src_h,
 				cell.x, cell.y, cell.w, cell.h - 24);
 		}
 
@@ -1149,6 +1136,11 @@ static void render_grid_view(Imlib_Image canvas)
 		gfx_color_t name_bg = theme->colors.panel_border;
 		name_bg.a = 200;
 		draw_filled_rect(canvas, name_bar, name_bg);
+
+		// Game name text
+		gfx_color_t name_color = (item_idx == menu_state.selected_index) ?
+		                         theme->colors.text_highlight : theme->colors.text_primary;
+		gfx_draw_text_truncated(canvas, item->name, cell.x + 4, cell.y + cell.h - 20, cell.w - 8, name_color);
 
 		// Move to next cell
 		col++;
@@ -1170,16 +1162,24 @@ static void render_wheel_view(Imlib_Image canvas)
 	// Wheel parameters
 	int center_x = fb_width / 2;
 	int center_y = fb_height / 2 - 40;  // Slightly above center
-	int wheel_radius = 300;             // Distance from center to items
-	int item_size_center = 200;         // Size of center (selected) item
-	int item_size_side = 120;           // Size of side items
+	int wheel_radius = 280;             // Distance from center to items
+	int item_size_center = 280;         // Size of center (selected) item - BIGGER
+	int item_size_side = 100;           // Size of side items
 	int visible_items = 7;              // Number of visible items in wheel
 
 	// Calculate positions for wheel items
 	int half_visible = visible_items / 2;
 
-	for (int offset = -half_visible; offset <= half_visible; offset++)
+	// Render back to front: outer items first, then inner, then center
+	// This creates proper z-ordering (items behind render first)
+	int render_order[] = { -3, 3, -2, 2, -1, 1, 0 }; // Outside to center
+	int render_count = sizeof(render_order) / sizeof(render_order[0]);
+
+	for (int r = 0; r < render_count; r++)
 	{
+		int offset = render_order[r];
+		if (offset < -half_visible || offset > half_visible) continue;
+
 		int item_idx = menu_state.selected_index + offset;
 
 		// Wrap around
@@ -1242,13 +1242,18 @@ static void render_wheel_view(Imlib_Image canvas)
 		bg.a = alpha;
 		draw_filled_rect(canvas, item_rect, bg);
 
-		// Thumbnail
-		if (item->thumbnail)
+		// Thumbnail or placeholder boxart
+		Imlib_Image thumb = item->thumbnail ? item->thumbnail : boxart_get_preview_image();
+		if (thumb)
 		{
+			imlib_context_set_image(thumb);
+			int src_w = imlib_image_get_width();
+			int src_h = imlib_image_get_height();
+
 			imlib_context_set_image(canvas);
 			imlib_context_set_blend(1);
-			imlib_blend_image_onto_image(item->thumbnail, 1,
-				0, 0, item_size, item_size,
+			imlib_blend_image_onto_image(thumb, 1,
+				0, 0, src_w, src_h,
 				item_rect.x, item_rect.y, item_rect.w, item_rect.h - 20);
 		}
 
@@ -1258,14 +1263,6 @@ static void render_wheel_view(Imlib_Image canvas)
 		gfx_color_t name_bg = theme->colors.panel_border;
 		name_bg.a = (uint8_t)(200 * alpha / 255);
 		draw_filled_rect(canvas, name_bar, name_bg);
-
-		// Draw name text indicator
-		if (offset == 0)
-		{
-			gfx_rect_t text_bar = { name_bar.x + 4, name_bar.y + 4,
-			                        name_bar.w - 8, 12 };
-			draw_filled_rect(canvas, text_bar, theme->colors.text_primary);
-		}
 	}
 
 	// Title of selected item at bottom
@@ -1278,11 +1275,11 @@ static void render_wheel_view(Imlib_Image canvas)
 		title_bg.a = 200;
 		draw_filled_rect(canvas, title_area, title_bg);
 
-		// Title text placeholder
-		int text_width = strlen(selected->name) * 8;
-		if (text_width > 380) text_width = 380;
-		gfx_rect_t title_text = { center_x - text_width/2, title_y + 8, text_width, 16 };
-		draw_filled_rect(canvas, title_text, theme->colors.text_highlight);
+		// Title text centered
+		int text_width = strlen(selected->name) * 16; // 16 pixels per char
+		int text_x = center_x - text_width / 2;
+		if (text_x < title_area.x + 10) text_x = title_area.x + 10;
+		gfx_draw_text_truncated(canvas, selected->name, text_x, title_y + 6, 380, theme->colors.text_highlight);
 	}
 
 	// Update visible count for page navigation
