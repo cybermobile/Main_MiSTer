@@ -1504,9 +1504,8 @@ static void render_zaparoo_overlay(Imlib_Image canvas)
 	// NFC icon in header
 	draw_nfc_icon(canvas, card_x + 15, card_y + 10, 30, theme->colors.text_highlight);
 
-	// "ZAPAROO" title placeholder
-	gfx_rect_t title_text = { card_x + 55, card_y + 17, 100, 16 };
-	draw_filled_rect(canvas, title_text, theme->colors.text_highlight);
+	// "ZAPAROO" title text
+	gfx_draw_text(canvas, "ZAPAROO", card_x + 55, card_y + 17, theme->colors.text_highlight);
 
 	// Boxart area (centered in card)
 	int art_w = 280;
@@ -1515,18 +1514,28 @@ static void render_zaparoo_overlay(Imlib_Image canvas)
 	int art_y = card_y + header_h + 30;
 
 	// Try to get boxart for the game
-	// For now, just draw a placeholder
+	Imlib_Image boxart = boxart_get_preview_image();
 	gfx_rect_t art_rect = { art_x, art_y, art_w, art_h };
-	gfx_color_t art_bg = gfx_color_hex(0xFF2a2a3a);
-	draw_filled_rect(canvas, art_rect, art_bg);
-	draw_rect_border(canvas, art_rect, theme->colors.panel_border, 2);
 
-	// Game icon placeholder in center of art area
-	int icon_size = 80;
-	gfx_rect_t icon = { art_x + (art_w - icon_size) / 2,
-	                    art_y + (art_h - icon_size) / 2,
-	                    icon_size, icon_size };
-	draw_filled_rect(canvas, icon, theme->colors.panel_border);
+	if (boxart)
+	{
+		imlib_context_set_image(boxart);
+		int src_w = imlib_image_get_width();
+		int src_h = imlib_image_get_height();
+
+		imlib_context_set_image(canvas);
+		imlib_context_set_blend(1);
+		imlib_blend_image_onto_image(boxart, 1,
+			0, 0, src_w, src_h,
+			art_x, art_y, art_w, art_h);
+	}
+	else
+	{
+		// Fallback placeholder
+		gfx_color_t art_bg = gfx_color_hex(0xFF2a2a3a);
+		draw_filled_rect(canvas, art_rect, art_bg);
+	}
+	draw_rect_border(canvas, art_rect, theme->colors.panel_border, 2);
 
 	// Game title area
 	int title_y = art_y + art_h + 25;
@@ -1561,10 +1570,9 @@ static void render_zaparoo_overlay(Imlib_Image canvas)
 	gfx_rect_t progress_fill = { progress_x, progress_y, fill_w, progress_h };
 	draw_filled_rect(canvas, progress_fill, theme->colors.selection_border);
 
-	// "Loading..." text placeholder
-	gfx_rect_t loading_text = { card_x + (card_width - 80) / 2,
-	                            progress_y + progress_h + 10, 80, 14 };
-	draw_filled_rect(canvas, loading_text, theme->colors.text_secondary);
+	// "Loading..." text
+	int loading_text_x = card_x + (card_width - 10 * 16) / 2; // Center "Loading..." (10 chars * 16px)
+	gfx_draw_text(canvas, "Loading...", loading_text_x, progress_y + progress_h + 10, theme->colors.text_secondary);
 }
 
 // Main render function
