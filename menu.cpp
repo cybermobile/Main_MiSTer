@@ -69,6 +69,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "gfx_menu.h"
 #include "theme.h"
 #include "search.h"
+#include "scraper.h"
 
 /*menu states*/
 enum MENU
@@ -132,6 +133,10 @@ enum MENU
 	MENU_SCRIPTS1,
 	MENU_SCRIPTS_FB,
 	MENU_SCRIPTS_FB2,
+
+	MENU_SCRAPER1,
+	MENU_SCRAPER2,
+	MENU_SCRAPER_RUNNING,
 
 	MENU_DOC_FILE_SELECTED,
 	MENU_DOC_FILE_SELECTED_2,
@@ -6571,7 +6576,7 @@ void HandleUI(void)
 
 		m = 0;
 		OsdSetTitle("System Settings", OSD_ARROW_LEFT);
-		menumask = 0x1FF;
+		menumask = 0x3FF;  // 10 menu items
 
 		OsdWrite(m++);
 		sprintf(s, "       MiSTer v%s", version + 5);
@@ -6630,16 +6635,17 @@ void HandleUI(void)
 			sprintf(s, " Theme:        %s", current_theme ? current_theme->meta.name : "Default");
 			OsdWrite(m++, s, menusub == 5);
 		}
-		OsdWrite(m++, " Help                      \x16", menusub == 6);
+		OsdWrite(m++, " Scrape Artwork            \x16", menusub == 6);
+		OsdWrite(m++, " Help                      \x16", menusub == 7);
 		OsdWrite(m++, "");
 		cr = m;
-		OsdWrite(m++, " Reboot (hold \x16 cold reboot)", menusub == 7);
+		OsdWrite(m++, " Reboot (hold \x16 cold reboot)", menusub == 8);
 		sysinfo_timer = 0;
 
 		reboot_req = 0;
 
 		while(m < OsdGetSize()-1) OsdWrite(m++, "");
-		OsdWrite(15, STD_EXIT, menusub == 8);
+		OsdWrite(15, STD_EXIT, menusub == 9);
 		menustate = MENU_SYSTEM2;
 		break;
 
@@ -6715,12 +6721,18 @@ void HandleUI(void)
 				break;
 
 			case 6:
+				// Scrape Artwork submenu
+				menustate = MENU_SCRAPER1;
+				menusub = 0;
+				break;
+
+			case 7:
 				strcpy(Selected_tmp, DOCS_DIR);
 				FileCreatePath(Selected_tmp);
 				SelectFile(Selected_tmp, "PDFTXTMD ", SCANO_DIR | SCANO_TXT, MENU_DOC_FILE_SELECTED, MENU_NONE1);
 				break;
 
-			case 7:
+			case 8:
 				{
 					reboot_req = 1;
 
@@ -6733,7 +6745,7 @@ void HandleUI(void)
 				}
 				break;
 
-			case 8:
+			case 9:
 				menustate = MENU_NONE1;
 				break;
 			}
@@ -6953,6 +6965,190 @@ void HandleUI(void)
 				menusub = 3;
 				OsdClear();
 				OsdEnable(DISABLE_KEYBOARD);
+			}
+		}
+		break;
+
+		/******************************************************************/
+		/* Artwork Scraper menu */
+		/******************************************************************/
+	case MENU_SCRAPER1:
+		OsdSetSize(16);
+		helptext_idx = 0;
+		parentstate = menustate;
+		OsdSetTitle("Artwork Scraper", OSD_ARROW_LEFT);
+		menumask = 0x1F;  // 5 menu items
+
+		m = 0;
+		OsdWrite(m++);
+		OsdWrite(m++, "  Download game artwork from:");
+		OsdWrite(m++, "  ScreenScraper, TheGamesDB,");
+		OsdWrite(m++, "  or SteamGridDB");
+		OsdWrite(m++, "");
+
+		{
+			scraper_config_t *cfg = scraper_get_config();
+
+			// Show source status
+			sprintf(s, " ScreenScraper:    %s",
+				scraper_source_configured(SCRAPER_SOURCE_SCREENSCRAPER) ? "Ready" : "Not configured");
+			OsdWrite(m++, s);
+			sprintf(s, " TheGamesDB:       %s",
+				scraper_source_configured(SCRAPER_SOURCE_THEGAMESDB) ? "Ready" : "Not configured");
+			OsdWrite(m++, s);
+			sprintf(s, " SteamGridDB:      %s",
+				scraper_source_configured(SCRAPER_SOURCE_STEAMGRIDDB) ? "Ready" : "Not configured");
+			OsdWrite(m++, s);
+
+			OsdWrite(m++, "");
+			sprintf(s, " Auto-scrape:         %s", cfg->auto_scrape ? "On " : "Off");
+			OsdWrite(m++, s, menusub == 0);
+
+			OsdWrite(m++, "");
+			OsdWrite(m++, " Scrape Current System     \x16", menusub == 1);
+			OsdWrite(m++, " Scrape All Systems        \x16", menusub == 2);
+			OsdWrite(m++, "");
+			OsdWrite(m++, " Edit API Keys             \x16", menusub == 3);
+		}
+
+		while(m < OsdGetSize()-1) OsdWrite(m++, "");
+		OsdWrite(15, STD_EXIT, menusub == 4);
+		menustate = MENU_SCRAPER2;
+		break;
+
+	case MENU_SCRAPER2:
+		if (menu)
+		{
+			menustate = MENU_SYSTEM1;
+			menusub = 6;
+			break;
+		}
+		else if (select)
+		{
+			switch (menusub)
+			{
+			case 0:
+				// Toggle auto-scrape
+				{
+					scraper_config_t *cfg = scraper_get_config();
+					cfg->auto_scrape = !cfg->auto_scrape;
+					scraper_save_config();
+					menustate = MENU_SCRAPER1;
+				}
+				break;
+
+			case 1:
+				// Scrape current system (use boxart core name)
+				{
+					const char *core = boxart_get_core();
+					if (core && core[0])
+					{
+						scraper_scrape_system(core);
+						menustate = MENU_SCRAPER_RUNNING;
+					}
+					else
+					{
+						// No core loaded, show message
+						menustate = MENU_SCRAPER1;
+					}
+				}
+				break;
+
+			case 2:
+				// Scrape all systems
+				scraper_scrape_all();
+				menustate = MENU_SCRAPER_RUNNING;
+				break;
+
+			case 3:
+				// Edit API Keys - show info message
+				// For now, just tell user to edit config file
+				Info("Edit /media/fat/config/scraper.cfg");
+				menustate = MENU_SCRAPER1;
+				break;
+
+			case 4:
+				menustate = MENU_SYSTEM1;
+				menusub = 6;
+				break;
+			}
+		}
+		break;
+
+	case MENU_SCRAPER_RUNNING:
+		{
+			scraper_progress_t *prog = scraper_get_progress();
+			scraper_status_t status = scraper_get_status();
+
+			OsdSetTitle("Scraping...", 0);
+			m = 0;
+			OsdWrite(m++);
+
+			if (status == SCRAPER_RUNNING || status == SCRAPER_PAUSED)
+			{
+				sprintf(s, "  Progress: %d / %d", prog->processed, prog->total_games);
+				OsdWrite(m++, s);
+				sprintf(s, "  Found: %d  Downloaded: %d", prog->found, prog->downloaded);
+				OsdWrite(m++, s);
+				sprintf(s, "  Already had: %d  Failed: %d", prog->already_had, prog->failed);
+				OsdWrite(m++, s);
+				OsdWrite(m++, "");
+
+				if (prog->current_game[0])
+				{
+					char truncated[32];
+					strncpy(truncated, prog->current_game, 28);
+					truncated[28] = '\0';
+					sprintf(s, "  Current: %s", truncated);
+					OsdWrite(m++, s);
+				}
+
+				if (prog->eta_seconds > 0)
+				{
+					int mins = prog->eta_seconds / 60;
+					int secs = prog->eta_seconds % 60;
+					sprintf(s, "  ETA: %d:%02d", mins, secs);
+					OsdWrite(m++, s);
+				}
+			}
+			else if (status == SCRAPER_COMPLETE)
+			{
+				OsdWrite(m++, "  Scraping complete!");
+				OsdWrite(m++, "");
+				sprintf(s, "  Total: %d games", prog->total_games);
+				OsdWrite(m++, s);
+				sprintf(s, "  Downloaded: %d", prog->downloaded);
+				OsdWrite(m++, s);
+				sprintf(s, "  Already had: %d", prog->already_had);
+				OsdWrite(m++, s);
+				sprintf(s, "  Not found: %d", prog->failed);
+				OsdWrite(m++, s);
+			}
+			else if (status == SCRAPER_ERROR)
+			{
+				OsdWrite(m++, "  Scraping failed!");
+				OsdWrite(m++, "  Check configuration.");
+			}
+
+			while(m < OsdGetSize()-1) OsdWrite(m++, "");
+
+			if (status == SCRAPER_RUNNING)
+			{
+				OsdWrite(15, "           Stop", menusub == 0);
+			}
+			else
+			{
+				OsdWrite(15, STD_EXIT, menusub == 0);
+			}
+
+			if (select || menu)
+			{
+				if (status == SCRAPER_RUNNING)
+				{
+					scraper_stop();
+				}
+				menustate = MENU_SCRAPER1;
+				menusub = 0;
 			}
 		}
 		break;

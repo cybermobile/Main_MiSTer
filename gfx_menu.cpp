@@ -25,6 +25,7 @@
 #include "playtime.h"
 #include "gamedb.h"
 #include "menu.h"
+#include "zaparoo.h"
 
 // Maximum items in menu
 #define GFX_MAX_ITEMS 1024
@@ -85,11 +86,13 @@ static void render_list_view(Imlib_Image canvas);
 static void render_grid_view(Imlib_Image canvas);
 static void render_wheel_view(Imlib_Image canvas);
 static void render_search_overlay(Imlib_Image canvas);
+static void render_zaparoo_overlay(Imlib_Image canvas);
 static void render_header(Imlib_Image canvas);
 static void render_footer(Imlib_Image canvas);
 static void render_preview_panel(Imlib_Image canvas);
 static void render_scrollbar(Imlib_Image canvas, gfx_rect_t bounds);
 static void apply_blur_background(Imlib_Image canvas, Imlib_Image boxart);
+static void draw_nfc_icon(Imlib_Image canvas, int x, int y, int size, gfx_color_t color);
 
 // Helper: Create color from RGBA
 gfx_color_t gfx_color_rgba(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
@@ -616,6 +619,53 @@ void gfx_draw_rounded_rect(Imlib_Image img, gfx_rect_t rect, int radius, gfx_col
 	draw_filled_rect(img, rect, color);
 }
 
+// Draw NFC icon (card shape with radio waves)
+static void draw_nfc_icon(Imlib_Image canvas, int x, int y, int size, gfx_color_t color)
+{
+	imlib_context_set_image(canvas);
+	set_imlib_color(color);
+
+	// Card body (rectangle)
+	int card_w = size;
+	int card_h = (int)(size * 0.7f);
+	int card_x = x;
+	int card_y = y + (size - card_h) / 2;
+
+	// Draw card outline
+	int thickness = 2;
+	// Top
+	imlib_image_fill_rectangle(card_x, card_y, card_w, thickness);
+	// Bottom
+	imlib_image_fill_rectangle(card_x, card_y + card_h - thickness, card_w, thickness);
+	// Left
+	imlib_image_fill_rectangle(card_x, card_y, thickness, card_h);
+	// Right
+	imlib_image_fill_rectangle(card_x + card_w - thickness, card_y, thickness, card_h);
+
+	// Radio wave arcs (simplified as concentric partial rectangles/lines)
+	// Draw 3 curved lines emanating from top-right corner
+	int wave_x = card_x + card_w - 8;
+	int wave_y = card_y + 4;
+
+	// Wave 1 (innermost)
+	imlib_image_fill_rectangle(wave_x - 2, wave_y, 4, 2);
+	imlib_image_fill_rectangle(wave_x + 2, wave_y, 2, 4);
+
+	// Wave 2 (middle)
+	imlib_image_fill_rectangle(wave_x - 5, wave_y - 2, 6, 2);
+	imlib_image_fill_rectangle(wave_x + 4, wave_y - 2, 2, 6);
+
+	// Wave 3 (outermost)
+	imlib_image_fill_rectangle(wave_x - 8, wave_y - 4, 8, 2);
+	imlib_image_fill_rectangle(wave_x + 6, wave_y - 4, 2, 8);
+
+	// Small chip rectangle inside card
+	int chip_size = 6;
+	int chip_x = card_x + 6;
+	int chip_y = card_y + (card_h - chip_size) / 2;
+	imlib_image_fill_rectangle(chip_x, chip_y, chip_size, chip_size);
+}
+
 // Render header bar with title
 static void render_header(Imlib_Image canvas)
 {
@@ -636,6 +686,39 @@ static void render_header(Imlib_Image canvas)
 	{
 		gfx_draw_text(canvas, menu_state.title, 20, 18, theme->colors.text_primary);
 	}
+
+	// Zaparoo NFC status icon (right side of header)
+	int icon_x = width - 70;
+	int icon_y = 15;
+	int icon_size = 30;
+
+	zaparoo_status_t zap_status = zaparoo_get_status();
+	gfx_color_t icon_color;
+
+	switch (zap_status)
+	{
+	case ZAPAROO_DISCONNECTED:
+		// Dark gray with low opacity - no reader connected
+		icon_color = gfx_color_rgba(80, 80, 80, 100);
+		break;
+	case ZAPAROO_IDLE:
+		// Cyan/teal - reader connected and ready
+		icon_color = gfx_color_rgba(80, 180, 220, 255);
+		break;
+	case ZAPAROO_SCANNING:
+		// Yellow/orange pulse - actively scanning
+		icon_color = gfx_color_rgba(255, 200, 80, 255);
+		break;
+	case ZAPAROO_CARD_DETECTED:
+		// Bright green - card detected successfully
+		icon_color = gfx_color_rgba(80, 220, 120, 255);
+		break;
+	default:
+		icon_color = gfx_color_rgba(80, 80, 80, 100);
+		break;
+	}
+
+	draw_nfc_icon(canvas, icon_x, icon_y, icon_size, icon_color);
 }
 
 // Render footer bar with controls hint
@@ -1392,6 +1475,101 @@ static void render_search_overlay(Imlib_Image canvas)
 	}
 }
 
+// Render Zaparoo card scan overlay
+static void render_zaparoo_overlay(Imlib_Image canvas)
+{
+	if (!zaparoo_overlay_active()) return;
+
+	gfx_theme_t *theme = menu_state.theme;
+	zaparoo_overlay_t *overlay = zaparoo_get_overlay();
+
+	// Full-screen semi-transparent background
+	gfx_rect_t bg_overlay = { 0, 0, fb_width, fb_height };
+	gfx_color_t bg_color = gfx_color_hex(0xE0000000);
+	draw_filled_rect(canvas, bg_overlay, bg_color);
+
+	// Center card dimensions
+	int card_width = 420;
+	int card_height = 520;
+	int card_x = (fb_width - card_width) / 2;
+	int card_y = (fb_height - card_height) / 2 - 20;
+
+	// Card background with selection border
+	gfx_rect_t card = { card_x, card_y, card_width, card_height };
+	draw_filled_rect(canvas, card, theme->colors.panel_bg);
+	draw_rect_border(canvas, card, theme->colors.selection_border, 3);
+
+	// Header bar with "NFC DETECTED" or "ZAPAROO"
+	int header_h = 50;
+	gfx_rect_t header = { card_x, card_y, card_width, header_h };
+	draw_filled_rect(canvas, header, theme->colors.selection_bg);
+
+	// NFC icon in header
+	draw_nfc_icon(canvas, card_x + 15, card_y + 10, 30, theme->colors.text_highlight);
+
+	// "ZAPAROO" title placeholder
+	gfx_rect_t title_text = { card_x + 55, card_y + 17, 100, 16 };
+	draw_filled_rect(canvas, title_text, theme->colors.text_highlight);
+
+	// Boxart area (centered in card)
+	int art_w = 280;
+	int art_h = 280;
+	int art_x = card_x + (card_width - art_w) / 2;
+	int art_y = card_y + header_h + 30;
+
+	// Try to get boxart for the game
+	// For now, just draw a placeholder
+	gfx_rect_t art_rect = { art_x, art_y, art_w, art_h };
+	gfx_color_t art_bg = gfx_color_hex(0xFF2a2a3a);
+	draw_filled_rect(canvas, art_rect, art_bg);
+	draw_rect_border(canvas, art_rect, theme->colors.panel_border, 2);
+
+	// Game icon placeholder in center of art area
+	int icon_size = 80;
+	gfx_rect_t icon = { art_x + (art_w - icon_size) / 2,
+	                    art_y + (art_h - icon_size) / 2,
+	                    icon_size, icon_size };
+	draw_filled_rect(canvas, icon, theme->colors.panel_border);
+
+	// Game title area
+	int title_y = art_y + art_h + 25;
+	const char *game_name = overlay->card.game_name;
+	if (game_name[0])
+	{
+		// Draw game name text
+		gfx_draw_text(canvas, game_name, card_x + 20, title_y, theme->colors.text_primary);
+	}
+	else
+	{
+		// Placeholder
+		gfx_rect_t name_placeholder = { card_x + 30, title_y, 250, 20 };
+		draw_filled_rect(canvas, name_placeholder, theme->colors.text_primary);
+	}
+
+	// Loading indicator / progress bar
+	int progress_y = card_y + card_height - 40;
+	int progress_w = card_width - 80;
+	int progress_h = 8;
+	int progress_x = card_x + 40;
+
+	// Progress background
+	gfx_rect_t progress_bg = { progress_x, progress_y, progress_w, progress_h };
+	gfx_color_t progress_bg_color = gfx_color_hex(0xFF1a1a2a);
+	draw_filled_rect(canvas, progress_bg, progress_bg_color);
+
+	// Animated progress fill (simple pulse effect)
+	static int progress_phase = 0;
+	progress_phase = (progress_phase + 3) % 100;
+	int fill_w = (progress_w * progress_phase) / 100;
+	gfx_rect_t progress_fill = { progress_x, progress_y, fill_w, progress_h };
+	draw_filled_rect(canvas, progress_fill, theme->colors.selection_border);
+
+	// "Loading..." text placeholder
+	gfx_rect_t loading_text = { card_x + (card_width - 80) / 2,
+	                            progress_y + progress_h + 10, 80, 14 };
+	draw_filled_rect(canvas, loading_text, theme->colors.text_secondary);
+}
+
 // Main render function
 void gfx_menu_render(void)
 {
@@ -1482,6 +1660,9 @@ void gfx_menu_render(void)
 		// Render search overlay on top of everything
 		render_search_overlay(canvas);
 
+		// Render Zaparoo card scan overlay (topmost)
+		render_zaparoo_overlay(canvas);
+
 		// Copy rendered image to framebuffer (back buffer)
 		imlib_context_set_image(canvas);
 		uint32_t *src_data = imlib_image_get_data_for_reading_only();
@@ -1552,6 +1733,10 @@ int gfx_menu_save_preview(const char *filename)
 
 	render_header(preview);
 	render_footer(preview);
+
+	// Render overlays
+	render_search_overlay(preview);
+	render_zaparoo_overlay(preview);
 
 	// Restore dimensions
 	fb_width = old_width;

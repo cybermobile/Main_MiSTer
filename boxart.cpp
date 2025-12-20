@@ -16,6 +16,7 @@
 #include "video.h"
 #include "hardware.h"
 #include "shmem.h"
+#include "scraper.h"
 
 // Artwork subdirectory names for each type
 static const char* artwork_dirs[] = {
@@ -462,6 +463,13 @@ int boxart_load_any(const char *game_name, boxart_result_t *result)
 		{
 			return 1;
 		}
+	}
+
+	// No artwork found - trigger auto-scraping if enabled
+	// This will queue the game for background download
+	if (boxart_state.core_name[0])
+	{
+		scraper_auto_scrape(game_name, NULL, boxart_state.core_name);
 	}
 
 	return 0;
