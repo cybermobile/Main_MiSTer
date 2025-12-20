@@ -4,15 +4,23 @@ A custom user experience for [MiSTer FPGA](https://github.com/MiSTer-devel/Main_
 
 ## Features
 
-- **Grid View** - Browse cores and games in a visual grid layout
-- **Wheel View** - Navigate with a carousel-style interface
+- **Home Screen** - Quick access to Continue Playing, Recently Added, Favorites, and Cores
+- **Game Details** - Full-screen view with boxart, metadata, and play statistics
+- **Multiple View Modes** - List, Grid, and Wheel views for browsing games
 - **NFC/Zaparoo Support** - Integrated NFC card scanning with visual feedback
+- **Theme Support** - 6 built-in themes (Dark, Light, Retro, Neon, Minimal, Analogue)
 - **Modern UI** - Refreshed visual design while maintaining MiSTer compatibility
 
 ## UI Preview
 
-### Main Interface
-![Main Preview](ui_preview/preview.png)
+### Home Screen
+![Home Screen](ui_preview/preview_home.png)
+
+### Game Details
+![Game Details](ui_preview/preview_details.png)
+
+### List View
+![List View](ui_preview/preview.png)
 
 ### Grid View
 ![Grid View](ui_preview/preview.png_Grid.png)
