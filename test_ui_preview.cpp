@@ -94,7 +94,36 @@ void playtime_format_relative_time(time_t timestamp, char *buf, int len) {
 
 // C++ stubs for gamedb
 gamedb_entry_t* gamedb_lookup_filename(const char *filename) { (void)filename; return NULL; }
-const char* gamedb_region_name(gamedb_region_t region) { (void)region; return "Unknown"; }
+const char* gamedb_genre_name(gamedb_genre_t genre) {
+    switch (genre) {
+        case GENRE_ACTION: return "Action";
+        case GENRE_ADVENTURE: return "Adventure";
+        case GENRE_ARCADE: return "Arcade";
+        case GENRE_BOARD: return "Board";
+        case GENRE_EDUCATIONAL: return "Educational";
+        case GENRE_RPG: return "Role-Playing";
+        case GENRE_PLATFORMER: return "Platformer";
+        case GENRE_PUZZLE: return "Puzzle";
+        case GENRE_SHOOTER: return "Shooter";
+        case GENRE_SPORTS: return "Sports";
+        case GENRE_RACING: return "Racing";
+        case GENRE_FIGHTING: return "Fighting";
+        case GENRE_SIMULATION: return "Simulation";
+        case GENRE_STRATEGY: return "Strategy";
+        case GENRE_OTHER: return "Other";
+        default: return "Unknown";
+    }
+}
+const char* gamedb_region_name(gamedb_region_t region) {
+    switch (region) {
+        case REGION_USA: return "USA";
+        case REGION_EUROPE: return "Europe";
+        case REGION_JAPAN: return "Japan";
+        case REGION_WORLD: return "World";
+        case REGION_OTHER: return "Other";
+        default: return "Unknown";
+    }
+}
 
 // C++ stubs for animation
 void anim_init(void) {}
@@ -350,6 +379,50 @@ int main(int argc, char *argv[])
         printf("  Failed with error %d\n", overlay_result);
     }
 
+    // Test Game Details Page (Polymega-inspired)
+    printf("\n--- Testing Game Details Page ---\n");
+
+    zaparoo_hide_overlay();  // No overlay for details test
+    test_set_zaparoo_status(ZAPAROO_IDLE);
+    gfx_menu_set_view(GFX_VIEW_LIST);
+
+    // Show details for an item
+    gfx_menu_show_details(1);  // Show details for Super Mario World
+
+    char details_filename[256];
+    snprintf(details_filename, sizeof(details_filename), "ui_preview/preview_details.png");
+
+    printf("Rendering Game Details page to %s...\n", details_filename);
+    int details_result = gfx_menu_save_preview(details_filename);
+
+    if (details_result == 0) {
+        printf("  Success!\n");
+    } else {
+        printf("  Failed with error %d\n", details_result);
+    }
+
+    // Test Home Screen
+    printf("\n--- Testing Home Screen ---\n");
+
+    // Populate home screen with test data
+    gfx_menu_home_populate_test_data();
+    gfx_menu_show_home();
+
+    char home_filename[256];
+    snprintf(home_filename, sizeof(home_filename), "ui_preview/preview_home.png");
+
+    printf("Rendering Home Screen to %s...\n", home_filename);
+    int home_result = gfx_menu_save_preview(home_filename);
+
+    if (home_result == 0) {
+        printf("  Success!\n");
+    } else {
+        printf("  Failed with error %d\n", home_result);
+    }
+
+    // Return to browse mode for final cleanup
+    gfx_menu_show_browse();
+
     printf("\nDone! Check the generated PNG files.\n");
     printf("\nGenerated files:\n");
     printf("  - ui_preview/preview.png (List view)\n");
@@ -357,6 +430,8 @@ int main(int argc, char *argv[])
     printf("  - ui_preview/preview.png_Wheel.png (Wheel view)\n");
     printf("  - ui_preview/preview_nfc_*.png (NFC status icons)\n");
     printf("  - ui_preview/preview_zaparoo_overlay.png (Card scan overlay)\n");
+    printf("  - ui_preview/preview_details.png (Game Details page)\n");
+    printf("  - ui_preview/preview_home.png (Home Screen)\n");
 
     // Cleanup
     gfx_menu_shutdown();
