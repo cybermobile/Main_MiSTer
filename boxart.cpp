@@ -465,13 +465,8 @@ int boxart_load_any(const char *game_name, boxart_result_t *result)
 		}
 	}
 
-	// No artwork found - trigger auto-scraping if enabled
-	// This will queue the game for background download
-	if (boxart_state.core_name[0])
-	{
-		scraper_auto_scrape(game_name, NULL, boxart_state.core_name);
-	}
-
+	// No artwork found - artwork is downloaded by library sync at startup
+	// or manually via the scraper menu
 	return 0;
 }
 

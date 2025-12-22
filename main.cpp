@@ -41,6 +41,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "search.h"
 #include "theme.h"
 #include "core_settings.h"
+#include "library_sync.h"
+#include "scraper.h"
 #include <sys/time.h>
 
 const char *version = "$VER:" VDATE;
@@ -85,14 +87,22 @@ int main(int argc, char *argv[])
 	search_init();
 	theme_init();
 	core_settings_init();
+	scraper_init();
+	library_sync_init();
 	user_io_init((argc > 1) ? argv[1] : "",(argc > 2) ? argv[2] : NULL);
 
 	// Enable graphical menu if configured in MiSTer.ini
+	// Debug: write a test file to check this code path
+	FILE *dbg = fopen("/media/fat/main_debug.log", "w");
+	if (dbg) {
+		fprintf(dbg, "gfx_menu_enable = %d\n", cfg.gfx_menu_enable);
+		fclose(dbg);
+	}
+	
 	if (cfg.gfx_menu_enable)
 	{
 		printf("Graphical menu enabled\n");
 		gfx_menu_set_enabled(1);
-		gfx_menu_set_view((gfx_view_type_t)cfg.gfx_menu_view);
 
 		// Load theme by name
 		if (cfg.gfx_menu_theme[0])
@@ -105,6 +115,9 @@ int main(int argc, char *argv[])
 				printf("Loaded theme: %s\n", theme_entry->meta.name);
 			}
 		}
+
+		// Start background library sync (generates MGLs and downloads boxart)
+		library_sync_start();
 	}
 
 #ifdef USE_SCHEDULER

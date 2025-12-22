@@ -1403,8 +1403,7 @@ void user_io_init(const char *path, const char *xml)
 	if (cfg.gfx_menu_enable)
 	{
 		gfx_menu_load_theme(cfg.gfx_menu_theme);
-		gfx_menu_set_view((gfx_view_type_t)cfg.gfx_menu_view);
-		printf("Graphical menu enabled (theme: %s, view: %d)\n", cfg.gfx_menu_theme, cfg.gfx_menu_view);
+		printf("Graphical menu enabled (theme: %s)\n", cfg.gfx_menu_theme);
 	}
 	
 	while (cfg.waitmount[0] && !is_menu())

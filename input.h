@@ -114,4 +114,7 @@ void parse_buttons();
 char *get_buttons(int type = 0);
 void set_ovr_buttons(char *s, int type);
 
+// Get controller name for a player (1-6), returns NULL if not connected
+const char* get_player_controller_name(int player);
+
 #endif

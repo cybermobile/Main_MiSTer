@@ -8,30 +8,12 @@
 #include <inttypes.h>
 #include "lib/imlib2/Imlib2.h"
 
-// Menu view types
+// Menu mode (screen type) - simplified to just systems and games grids
 typedef enum {
-	GFX_VIEW_LIST = 0,      // Traditional list with thumbnails
-	GFX_VIEW_GRID,          // Grid of boxart images
-	GFX_VIEW_WHEEL,         // Wheel/carousel view
-	GFX_VIEW_COUNT
-} gfx_view_type_t;
-
-// Menu mode (screen type)
-typedef enum {
-	GFX_MODE_BROWSE = 0,    // File/folder browsing (default list/grid/wheel)
-	GFX_MODE_HOME,          // Home screen with sections
-	GFX_MODE_DETAILS,       // Full-screen game details
+	GFX_MODE_SYSTEMS = 0,   // Grid of system icons (SNES, Genesis, etc.)
+	GFX_MODE_GAMES,         // Grid of games for selected system
 	GFX_MODE_COUNT
 } gfx_menu_mode_t;
-
-// Home screen section types
-typedef enum {
-	HOME_SECTION_CONTINUE = 0,  // Continue Playing (recently played)
-	HOME_SECTION_RECENT,        // Recently Added (by file date)
-	HOME_SECTION_FAVORITES,     // User favorites
-	HOME_SECTION_CORES,         // Quick access to cores
-	HOME_SECTION_COUNT
-} home_section_t;
 
 // Menu item types
 typedef enum {
@@ -94,31 +76,23 @@ typedef struct {
 	Imlib_Image background_image;
 } gfx_theme_t;
 
-// Home screen state
+// Menu state - simplified for grid-only UI
 typedef struct {
-	home_section_t current_section;
-	int section_scroll[HOME_SECTION_COUNT];  // Horizontal scroll per section
-	int section_counts[HOME_SECTION_COUNT];  // Item count per section
-} home_state_t;
-
-// Menu state
-typedef struct {
-	gfx_view_type_t view_type;
-	gfx_menu_mode_t mode;           // Current menu mode (browse/home/details)
+	gfx_menu_mode_t mode;           // Current menu mode (systems/games)
 	gfx_menu_item_t *items;
 	int item_count;
 	int selected_index;
 	int scroll_offset;
 	int visible_count;
 	char title[256];
-	char breadcrumb[512];
+	char current_system[64];        // Currently selected system name
 	gfx_theme_t *theme;
 	uint8_t enabled;
 	uint8_t needs_redraw;
+	uint8_t show_favorites_only;    // Filter to show only favorites
+	uint8_t refresh_requested;      // Flag to trigger library refresh
 	float scroll_velocity;
 	uint32_t last_input_time;
-	home_state_t home;              // Home screen state
-	int details_item_index;         // Item being viewed in details mode
 } gfx_menu_state_t;
 
 // Animation state
@@ -148,7 +122,6 @@ void gfx_menu_apply_default_theme(void);
 
 // Menu content
 void gfx_menu_set_title(const char *title);
-void gfx_menu_set_breadcrumb(const char *breadcrumb);
 void gfx_menu_clear_items(void);
 int gfx_menu_add_item(const char *name, const char *path, gfx_item_type_t type);
 void gfx_menu_set_item_thumbnail(int index, Imlib_Image thumbnail);
@@ -165,17 +138,11 @@ void gfx_menu_scroll_to(int index);
 int gfx_menu_get_selected_index(void);
 gfx_menu_item_t* gfx_menu_get_selected_item(void);
 
-// View modes
-void gfx_menu_set_view(gfx_view_type_t view);
-gfx_view_type_t gfx_menu_get_view(void);
-void gfx_menu_cycle_view(void);
-
 // Menu modes (screens)
 void gfx_menu_set_mode(gfx_menu_mode_t mode);
 gfx_menu_mode_t gfx_menu_get_mode(void);
-void gfx_menu_show_details(int item_index);
-void gfx_menu_show_home(void);
-void gfx_menu_show_browse(void);
+void gfx_menu_show_systems(void);
+void gfx_menu_show_games(const char *system_name);
 
 // Rendering
 void gfx_menu_render(void);
@@ -203,7 +170,13 @@ void gfx_menu_render_setting_item(int x, int y, int width, void *setting, int se
 // Testing/Preview
 int gfx_menu_save_preview(const char *filename);
 
-// Home screen data population (for testing)
-void gfx_menu_home_populate_test_data(void);
+// Get current system name
+const char* gfx_menu_get_current_system(void);
+
+// Check if showing favorites only
+int gfx_menu_is_favorites_filter(void);
+
+// Check and clear refresh request flag
+int gfx_menu_check_refresh_request(void);
 
 #endif // __GFX_MENU_H__

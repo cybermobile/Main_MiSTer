@@ -2346,6 +2346,29 @@ void reset_players()
 	memset(player_pdsp, 0, sizeof(player_pdsp));
 }
 
+// Get controller name for a player (1-6), returns NULL if not connected
+const char* get_player_controller_name(int player)
+{
+	if (player < 1 || player >= NUMPLAYERS) return NULL;
+	
+	// Check if any device is assigned to this player
+	for (int i = 0; i < NUMDEV; i++)
+	{
+		if (input[i].num == player && input[i].id[0])
+		{
+			return input[i].name;
+		}
+	}
+	
+	// Also check player_pad array
+	if (player_pad[player].id[0])
+	{
+		return player_pad[player].name;
+	}
+	
+	return NULL;
+}
+
 static void store_player(int num, int dev)
 {
 	devInput *player = (input[dev].quirk == QUIRK_PDSP || input[dev].quirk == QUIRK_MSSP) ? player_pdsp : player_pad;

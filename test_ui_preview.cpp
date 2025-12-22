@@ -38,6 +38,22 @@ int video_fb_state(void) { return 0; }
 int video_chvt(int num) { (void)num; return 0; }
 void OsdDisable(void) {}
 void user_io_osd_key_enable(char enable) { (void)enable; }
+
+// Stubs for network and controller display (new UI features)
+static char fake_eth_ip[] = "";  // No ethernet in test
+static char fake_wifi_ip[] = "192.168.1.100";  // WiFi connected
+char* getNet(int spec) {
+    // spec 1 = ethernet, spec 2 = wifi
+    if (spec == 2) return fake_wifi_ip;  // Simulate WiFi connected
+    return NULL;
+}
+
+const char* get_player_controller_name(int player) {
+    // Simulate controllers connected for players 1 and 2
+    static const char* names[] = { "8BitDo Pro 2", "Xbox Controller", NULL, NULL };
+    if (player >= 1 && player <= 4) return names[player - 1];
+    return NULL;
+}
 unsigned long GetTimer(unsigned long offset) { return 1000 + offset; }
 int menu_use_graphical(void) { return 1; }
 
@@ -210,66 +226,29 @@ void test_set_zaparoo_status(zaparoo_status_t status) {
     test_zaparoo_status = status;
 }
 
-// C++ stubs for scraper
-static scraper_config_t test_scraper_config = {0};
+// C++ stubs for scraper (simplified - libretro only)
 static scraper_progress_t test_scraper_progress = {0};
 
-void scraper_init(void) {
-    memset(&test_scraper_config, 0, sizeof(test_scraper_config));
-    test_scraper_config.auto_scrape = 1;
-}
+void scraper_init(void) {}
 void scraper_shutdown(void) {}
-int scraper_load_config(void) { return 0; }
-int scraper_save_config(void) { return 1; }
-scraper_config_t* scraper_get_config(void) { return &test_scraper_config; }
 int scraper_scrape_game(const char *game_name, const char *game_path,
                         const char *core_name, scraper_result_t *result) {
     (void)game_name; (void)game_path; (void)core_name; (void)result;
     return 0;
 }
-int scraper_scrape_game_async(const char *game_name, const char *game_path,
-                               const char *core_name) {
-    (void)game_name; (void)game_path; (void)core_name;
-    return 0;
-}
-int scraper_async_complete(int scrape_id, scraper_result_t *result) {
-    (void)scrape_id; (void)result;
-    return 0;
-}
 int scraper_scrape_system(const char *system_name) { (void)system_name; return 0; }
-int scraper_scrape_all(void) { return 0; }
 void scraper_stop(void) {}
-void scraper_pause(void) {}
-void scraper_resume(void) {}
 scraper_status_t scraper_get_status(void) { return SCRAPER_IDLE; }
 scraper_progress_t* scraper_get_progress(void) { return &test_scraper_progress; }
 int scraper_has_artwork(const char *game_path, const char *core_name) {
     (void)game_path; (void)core_name;
     return 0;
 }
-int scraper_auto_scrape(const char *game_name, const char *game_path,
-                        const char *core_name) {
-    (void)game_name; (void)game_path; (void)core_name;
-    return 0;
-}
-void scraper_poll(void) {}
-int scraper_get_screenscraper_system(const char *core_name) { (void)core_name; return 0; }
-int scraper_get_thegamesdb_platform(const char *core_name) { (void)core_name; return 0; }
-const char* scraper_get_steamgriddb_platform(const char *core_name) { (void)core_name; return NULL; }
-const char* scraper_source_name(scraper_source_t source) {
-    switch (source) {
-        case SCRAPER_SOURCE_SCREENSCRAPER: return "ScreenScraper";
-        case SCRAPER_SOURCE_THEGAMESDB: return "TheGamesDB";
-        case SCRAPER_SOURCE_STEAMGRIDDB: return "SteamGridDB";
-        default: return "Unknown";
-    }
-}
-int scraper_source_configured(scraper_source_t source) { (void)source; return 0; }
-int scraper_test_source(scraper_source_t source) { (void)source; return 0; }
+const char* scraper_get_libretro_repo(const char *core_name) { (void)core_name; return NULL; }
 
 int main(int argc, char *argv[])
 {
-    const char *output_file = (argc > 1) ? argv[1] : "ui_preview.png";
+    const char *output_file = (argc > 1) ? argv[1] : "ui_preview/preview.png";
 
     printf("MiSTer UI Preview Generator\n");
     printf("===========================\n\n");
@@ -291,48 +270,64 @@ int main(int argc, char *argv[])
         printf("  Theme: %s\n", theme->meta.name);
     }
 
-    // Add some test menu items
-    printf("Adding test menu items...\n");
-    gfx_menu_set_title("Games - SNES");
-    gfx_menu_set_breadcrumb("/media/fat/games/SNES");
+    // Test Systems Grid (new simplified UI)
+    printf("\n--- Testing Systems Grid ---\n");
+    
+    // Clear and add system items
+    gfx_menu_clear_items();
+    gfx_menu_add_item("SNES", "/media/fat/_Console/SNES", GFX_ITEM_CORE);
+    gfx_menu_add_item("NES", "/media/fat/_Console/NES", GFX_ITEM_CORE);
+    gfx_menu_add_item("Genesis", "/media/fat/_Console/Genesis", GFX_ITEM_CORE);
+    gfx_menu_add_item("TurboGrafx-16", "/media/fat/_Console/TurboGrafx16", GFX_ITEM_CORE);
+    gfx_menu_add_item("PlayStation", "/media/fat/_Console/PSX", GFX_ITEM_CORE);
+    gfx_menu_add_item("Neo Geo", "/media/fat/_Console/NeoGeo", GFX_ITEM_CORE);
+    gfx_menu_add_item("Game Boy", "/media/fat/_Console/Gameboy", GFX_ITEM_CORE);
+    gfx_menu_add_item("GBA", "/media/fat/_Console/GBA", GFX_ITEM_CORE);
+    gfx_menu_add_item("N64", "/media/fat/_Console/N64", GFX_ITEM_CORE);
+    gfx_menu_add_item("Atari 2600", "/media/fat/_Console/Atari2600", GFX_ITEM_CORE);
+    gfx_menu_add_item("Commodore 64", "/media/fat/_Computer/C64", GFX_ITEM_CORE);
+    gfx_menu_add_item("Amiga", "/media/fat/_Computer/Minimig", GFX_ITEM_CORE);
+    
+    gfx_menu_show_systems();
+    gfx_menu_select_index(0);  // Select SNES
+    
+    char systems_filename[256];
+    snprintf(systems_filename, sizeof(systems_filename), "ui_preview/preview_systems.png");
+    printf("Rendering Systems Grid to %s...\n", systems_filename);
+    int systems_result = gfx_menu_save_preview(systems_filename);
+    if (systems_result == 0) {
+        printf("  Success!\n");
+    } else {
+        printf("  Failed with error %d\n", systems_result);
+    }
 
-    gfx_menu_add_item("..", "/media/fat/games", GFX_ITEM_BACK);
-    gfx_menu_add_item("Super Mario World", "/media/fat/games/SNES/Super Mario World.sfc", GFX_ITEM_GAME);
-    gfx_menu_add_item("The Legend of Zelda - A Link to the Past", "/media/fat/games/SNES/Zelda ALTTP.sfc", GFX_ITEM_GAME);
-    gfx_menu_add_item("Super Metroid", "/media/fat/games/SNES/Super Metroid.sfc", GFX_ITEM_GAME);
-    gfx_menu_add_item("Chrono Trigger", "/media/fat/games/SNES/Chrono Trigger.sfc", GFX_ITEM_GAME);
-    gfx_menu_add_item("Final Fantasy VI", "/media/fat/games/SNES/Final Fantasy VI.sfc", GFX_ITEM_GAME);
-    gfx_menu_add_item("EarthBound", "/media/fat/games/SNES/EarthBound.sfc", GFX_ITEM_GAME);
-    gfx_menu_add_item("Secret of Mana", "/media/fat/games/SNES/Secret of Mana.sfc", GFX_ITEM_GAME);
-    gfx_menu_add_item("Donkey Kong Country", "/media/fat/games/SNES/DKC.sfc", GFX_ITEM_GAME);
-    gfx_menu_add_item("Super Mario Kart", "/media/fat/games/SNES/Super Mario Kart.sfc", GFX_ITEM_GAME);
-    gfx_menu_add_item("Star Fox", "/media/fat/games/SNES/Star Fox.sfc", GFX_ITEM_GAME);
-
-    // Select an item
-    gfx_menu_select_index(1);  // Select Super Mario World
-
-    // Try different view modes
-    const char *view_names[] = { "List", "Grid", "Wheel" };
-
-    for (int view = 0; view < 3; view++) {
-        gfx_menu_set_view((gfx_view_type_t)view);
-
-        char filename[256];
-        if (view == 0) {
-            strcpy(filename, output_file);
-        } else {
-            snprintf(filename, sizeof(filename), "%s_%s.png",
-                     output_file, view_names[view]);
-        }
-
-        printf("Rendering %s view to %s...\n", view_names[view], filename);
-        int result = gfx_menu_save_preview(filename);
-
-        if (result == 0) {
-            printf("  Success!\n");
-        } else {
-            printf("  Failed with error %d\n", result);
-        }
+    // Test Games Grid
+    printf("\n--- Testing Games Grid ---\n");
+    
+    // Clear and add game items for SNES
+    gfx_menu_clear_items();
+    gfx_menu_add_item("Super Mario World", "/media/fat/games/SNES/Super Mario World.mgl", GFX_ITEM_GAME);
+    gfx_menu_add_item("Zelda - A Link to the Past", "/media/fat/games/SNES/Zelda ALTTP.mgl", GFX_ITEM_GAME);
+    gfx_menu_add_item("Super Metroid", "/media/fat/games/SNES/Super Metroid.mgl", GFX_ITEM_GAME);
+    gfx_menu_add_item("Chrono Trigger", "/media/fat/games/SNES/Chrono Trigger.mgl", GFX_ITEM_GAME);
+    gfx_menu_add_item("Final Fantasy VI", "/media/fat/games/SNES/Final Fantasy VI.mgl", GFX_ITEM_GAME);
+    gfx_menu_add_item("EarthBound", "/media/fat/games/SNES/EarthBound.mgl", GFX_ITEM_GAME);
+    gfx_menu_add_item("Secret of Mana", "/media/fat/games/SNES/Secret of Mana.mgl", GFX_ITEM_GAME);
+    gfx_menu_add_item("Donkey Kong Country", "/media/fat/games/SNES/DKC.mgl", GFX_ITEM_GAME);
+    gfx_menu_add_item("Super Mario Kart", "/media/fat/games/SNES/Super Mario Kart.mgl", GFX_ITEM_GAME);
+    gfx_menu_add_item("Star Fox", "/media/fat/games/SNES/Star Fox.mgl", GFX_ITEM_GAME);
+    gfx_menu_add_item("F-Zero", "/media/fat/games/SNES/F-Zero.mgl", GFX_ITEM_GAME);
+    gfx_menu_add_item("Mega Man X", "/media/fat/games/SNES/Mega Man X.mgl", GFX_ITEM_GAME);
+    
+    gfx_menu_show_games("SNES");
+    gfx_menu_select_index(0);  // Select Super Mario World
+    
+    printf("Rendering Games Grid to %s...\n", output_file);
+    int games_result = gfx_menu_save_preview(output_file);
+    if (games_result == 0) {
+        printf("  Success!\n");
+    } else {
+        printf("  Failed with error %d\n", games_result);
     }
 
     // Test Zaparoo NFC status icons in header
@@ -341,8 +336,6 @@ int main(int argc, char *argv[])
     // Test different NFC status states
     const char *status_names[] = { "Disconnected", "Idle", "Scanning", "CardDetected" };
     zaparoo_status_t statuses[] = { ZAPAROO_DISCONNECTED, ZAPAROO_IDLE, ZAPAROO_SCANNING, ZAPAROO_CARD_DETECTED };
-
-    gfx_menu_set_view(GFX_VIEW_LIST);  // Use list view for status tests
 
     for (int i = 0; i < 4; i++) {
         test_set_zaparoo_status(statuses[i]);
@@ -379,59 +372,12 @@ int main(int argc, char *argv[])
         printf("  Failed with error %d\n", overlay_result);
     }
 
-    // Test Game Details Page (Polymega-inspired)
-    printf("\n--- Testing Game Details Page ---\n");
-
-    zaparoo_hide_overlay();  // No overlay for details test
-    test_set_zaparoo_status(ZAPAROO_IDLE);
-    gfx_menu_set_view(GFX_VIEW_LIST);
-
-    // Show details for an item
-    gfx_menu_show_details(1);  // Show details for Super Mario World
-
-    char details_filename[256];
-    snprintf(details_filename, sizeof(details_filename), "ui_preview/preview_details.png");
-
-    printf("Rendering Game Details page to %s...\n", details_filename);
-    int details_result = gfx_menu_save_preview(details_filename);
-
-    if (details_result == 0) {
-        printf("  Success!\n");
-    } else {
-        printf("  Failed with error %d\n", details_result);
-    }
-
-    // Test Home Screen
-    printf("\n--- Testing Home Screen ---\n");
-
-    // Populate home screen with test data
-    gfx_menu_home_populate_test_data();
-    gfx_menu_show_home();
-
-    char home_filename[256];
-    snprintf(home_filename, sizeof(home_filename), "ui_preview/preview_home.png");
-
-    printf("Rendering Home Screen to %s...\n", home_filename);
-    int home_result = gfx_menu_save_preview(home_filename);
-
-    if (home_result == 0) {
-        printf("  Success!\n");
-    } else {
-        printf("  Failed with error %d\n", home_result);
-    }
-
-    // Return to browse mode for final cleanup
-    gfx_menu_show_browse();
-
     printf("\nDone! Check the generated PNG files.\n");
     printf("\nGenerated files:\n");
-    printf("  - ui_preview/preview.png (List view)\n");
-    printf("  - ui_preview/preview.png_Grid.png (Grid view)\n");
-    printf("  - ui_preview/preview.png_Wheel.png (Wheel view)\n");
+    printf("  - ui_preview/preview_systems.png (Systems Grid)\n");
+    printf("  - ui_preview/preview.png (Games Grid)\n");
     printf("  - ui_preview/preview_nfc_*.png (NFC status icons)\n");
     printf("  - ui_preview/preview_zaparoo_overlay.png (Card scan overlay)\n");
-    printf("  - ui_preview/preview_details.png (Game Details page)\n");
-    printf("  - ui_preview/preview_home.png (Home Screen)\n");
 
     // Cleanup
     gfx_menu_shutdown();

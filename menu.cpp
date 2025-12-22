@@ -417,10 +417,13 @@ void SelectFile(const char* path, const char* pFileExt, int Options, unsigned ch
 	}
 	else
 	{
-		const char *home = is_menu() ? "Scripts" : user_io_get_core_path(
-			(is_pce() && !strncasecmp(pFileExt, "CUE", 3)) ? PCECD_DIR :
-			(is_neogeo() && !strncasecmp(pFileExt, "CUE", 3)) ? NEOCD_DIR :
-			NULL, 1);
+		// Default to games folder when in menu mode with graphical UI enabled
+		const char *home = is_menu() ? 
+			(cfg.gfx_menu_enable ? "/media/fat/games" : "Scripts") : 
+			user_io_get_core_path(
+				(is_pce() && !strncasecmp(pFileExt, "CUE", 3)) ? PCECD_DIR :
+				(is_neogeo() && !strncasecmp(pFileExt, "CUE", 3)) ? NEOCD_DIR :
+				NULL, 1);
 		home_dir = strrchr(home, '/');
 		if (home_dir) home_dir++;
 		else home_dir = home;
@@ -599,7 +602,8 @@ static uint32_t menu_key_get(void)
 	return(c);
 }
 
-static char* getNet(int spec)
+// Network status function - exposed for graphical menu
+char* getNet(int spec)
 {
 	int netType = 0;
 	struct ifaddrs *ifaddr, *ifa, *ifae = 0, *ifaw = 0;
@@ -937,8 +941,81 @@ static void gfx_menu_sync_file_list(const char *title)
 	printf("GFX: gfx_menu_sync_file_list called, gfx_menu_is_enabled=%d\n", gfx_menu_is_enabled());
 	if (!gfx_menu_is_enabled()) return;
 
-	printf("GFX: Syncing file list, title='%s'\n", title ? title : "NULL");
+	printf("GFX: Syncing file list, title='%s', selPath='%s'\n", title ? title : "NULL", selPath);
 	gfx_menu_clear_items();
+
+	// Determine if we're in systems view or games view based on path
+	// /media/fat/games = systems view (listing system folders)
+	// /media/fat/games/SNES = games view (listing games in a system)
+	// /media/fat/_Games = systems view
+	// /media/fat/_Games/_NES = games view
+	int depth = 0;
+	const char *games_path = "/media/fat/games";
+	const char *games2_path = "/media/fat/_Games";
+	
+	if (strncmp(selPath, games_path, strlen(games_path)) == 0)
+	{
+		const char *after = selPath + strlen(games_path);
+		if (*after == '/') after++;
+		// Count slashes after base path to determine depth
+		while (*after)
+		{
+			if (*after == '/') depth++;
+			after++;
+		}
+		// If there's content after games/, we're in a system folder
+		if (selPath[strlen(games_path)] != '\0' && selPath[strlen(games_path)] == '/')
+		{
+			depth++;
+		}
+	}
+	else if (strncmp(selPath, games2_path, strlen(games2_path)) == 0)
+	{
+		const char *after = selPath + strlen(games2_path);
+		if (*after == '/') after++;
+		while (*after)
+		{
+			if (*after == '/') depth++;
+			after++;
+		}
+		if (selPath[strlen(games2_path)] != '\0' && selPath[strlen(games2_path)] == '/')
+		{
+			depth++;
+		}
+	}
+
+	printf("GFX: Path depth = %d\n", depth);
+	
+	if (depth >= 1)
+	{
+		// We're inside a system folder - games view
+		// Extract system name from path
+		char system_name[64] = "";
+		const char *start = NULL;
+		if (strncmp(selPath, games_path, strlen(games_path)) == 0)
+			start = selPath + strlen(games_path) + 1;
+		else if (strncmp(selPath, games2_path, strlen(games2_path)) == 0)
+			start = selPath + strlen(games2_path) + 1;
+		
+		if (start)
+		{
+			const char *end = strchr(start, '/');
+			if (end)
+				snprintf(system_name, sizeof(system_name), "%.*s", (int)(end - start), start);
+			else
+				strncpy(system_name, start, sizeof(system_name) - 1);
+		}
+		
+		printf("GFX: Games view - system='%s'\n", system_name);
+		gfx_menu_show_games(system_name);
+	}
+	else
+	{
+		// We're at games root - systems view
+		printf("GFX: Systems view\n");
+		gfx_menu_show_systems();
+	}
+	
 	gfx_menu_set_title(title ? title : "");
 
 	// Extract system name from current browsing path for boxart lookups
@@ -1331,13 +1408,9 @@ void HandleUI(void)
 			recent = true;
 			break;
 
-		// Graphical menu shortcuts
+		// Graphical menu shortcuts (V key now unused - grid-only view)
 		case KEY_V:
-			// Toggle view mode in graphical menu (List/Grid/Wheel)
-			if (gfx_menu_is_enabled() && menu_use_graphical())
-			{
-				gfx_menu_cycle_view();
-			}
+			// Previously toggled view modes - now grid-only
 			break;
 		case KEY_TAB:
 			// Toggle graphical menu on/off
@@ -1345,13 +1418,18 @@ void HandleUI(void)
 			{
 				cfg.gfx_menu_enable = !cfg.gfx_menu_enable;
 				gfx_menu_set_enabled(cfg.gfx_menu_enable);
+				// If enabling, sync the file list to populate the menu
+				if (cfg.gfx_menu_enable && menustate >= MENU_FILE_SELECT1 && menustate <= MENU_FILE_SELECT2)
+				{
+					gfx_menu_sync_file_list("Select");
+				}
 			}
 			break;
 		case KEY_SLASH:
 			// Open search in graphical menu
 			if (gfx_menu_is_enabled() && menu_use_graphical())
 			{
-				search_toggle();
+				search_start();
 			}
 			break;
 		}
@@ -5214,6 +5292,32 @@ void HandleUI(void)
 	case MENU_FILE_SELECT2:
 		menumask = 0;
 
+		// Check for graphical menu refresh request (X button)
+		if (gfx_menu_is_enabled() && menu_use_graphical())
+		{
+			if (gfx_menu_check_refresh_request())
+			{
+				// Trigger library rescan
+				printf("GFX: Refresh requested - rescanning directory\n");
+				filter[0] = 0;
+				filter_typing_timer = 0;
+				ScanDirectory(selPath, SCANF_INIT, fs_pFileExt, fs_Options);
+				menustate = MENU_FILE_SELECT1;
+				break;
+			}
+		}
+
+		// Handle X key for refresh
+		if (c == KEY_X && gfx_menu_is_enabled() && menu_use_graphical())
+		{
+			printf("GFX: X key pressed - refreshing\n");
+			filter[0] = 0;
+			filter_typing_timer = 0;
+			ScanDirectory(selPath, SCANF_INIT, fs_pFileExt, fs_Options);
+			menustate = MENU_FILE_SELECT1;
+			break;
+		}
+
 		if (c == KEY_BACKSPACE && (fs_Options & (SCANO_UMOUNT | SCANO_CLEAR)) && !strlen(filter))
 		{
 			for (int i = 0; i < OsdGetSize(); i++) OsdWrite(i, "", 0, 0);
@@ -5291,31 +5395,91 @@ void HandleUI(void)
 				menustate = MENU_FILE_SELECT1;
 			}
 
-			if ((c == KEY_PAGEUP) || (c == KEY_LEFT))
+			// Grid navigation: when graphical menu is in grid mode, use 2D navigation
+			int grid_cols = (gfx_menu_is_enabled() && menu_use_graphical()) ? 
+				((gfx_menu_get_mode() == GFX_MODE_SYSTEMS) ? 4 : 6) : 0;
+
+			if ((c == KEY_PAGEUP))
 			{
 				filter_typing_timer = 0;
 				ScanDirectory(selPath, SCANF_PREV_PAGE, fs_pFileExt, fs_Options);
 				menustate = MENU_FILE_SELECT1;
 			}
 
-			if ((c == KEY_PAGEDOWN) || (c == KEY_RIGHT))
+			if ((c == KEY_PAGEDOWN))
 			{
 				filter_typing_timer = 0;
 				ScanDirectory(selPath, SCANF_NEXT_PAGE, fs_pFileExt, fs_Options);
 				menustate = MENU_FILE_SELECT1;
 			}
 
-			if (down) // scroll down one entry
+			if (left) // left: prev item in grid, or prev page in list
 			{
 				filter_typing_timer = 0;
-				ScanDirectory(selPath, SCANF_NEXT, fs_pFileExt, fs_Options);
+				if (grid_cols > 0)
+				{
+					// Grid mode: move left by 1 item
+					ScanDirectory(selPath, SCANF_PREV, fs_pFileExt, fs_Options);
+				}
+				else
+				{
+					// List mode: page up
+					ScanDirectory(selPath, SCANF_PREV_PAGE, fs_pFileExt, fs_Options);
+				}
 				menustate = MENU_FILE_SELECT1;
 			}
 
-			if (up) // scroll up one entry
+			if (right) // right: next item in grid, or next page in list
 			{
 				filter_typing_timer = 0;
-				ScanDirectory(selPath, SCANF_PREV, fs_pFileExt, fs_Options);
+				if (grid_cols > 0)
+				{
+					// Grid mode: move right by 1 item
+					ScanDirectory(selPath, SCANF_NEXT, fs_pFileExt, fs_Options);
+				}
+				else
+				{
+					// List mode: page down
+					ScanDirectory(selPath, SCANF_NEXT_PAGE, fs_pFileExt, fs_Options);
+				}
+				menustate = MENU_FILE_SELECT1;
+			}
+
+			if (down) // down: next row in grid, or next item in list
+			{
+				filter_typing_timer = 0;
+				if (grid_cols > 0)
+				{
+					// Grid mode: move down by column count
+					for (int i = 0; i < grid_cols; i++)
+					{
+						ScanDirectory(selPath, SCANF_NEXT, fs_pFileExt, fs_Options);
+					}
+				}
+				else
+				{
+					// List mode: next item
+					ScanDirectory(selPath, SCANF_NEXT, fs_pFileExt, fs_Options);
+				}
+				menustate = MENU_FILE_SELECT1;
+			}
+
+			if (up) // up: prev row in grid, or prev item in list
+			{
+				filter_typing_timer = 0;
+				if (grid_cols > 0)
+				{
+					// Grid mode: move up by column count
+					for (int i = 0; i < grid_cols; i++)
+					{
+						ScanDirectory(selPath, SCANF_PREV, fs_pFileExt, fs_Options);
+					}
+				}
+				else
+				{
+					// List mode: prev item
+					ScanDirectory(selPath, SCANF_PREV, fs_pFileExt, fs_Options);
+				}
 				menustate = MENU_FILE_SELECT1;
 			}
 
@@ -6977,42 +7141,20 @@ void HandleUI(void)
 		helptext_idx = 0;
 		parentstate = menustate;
 		OsdSetTitle("Artwork Scraper", OSD_ARROW_LEFT);
-		menumask = 0x1F;  // 5 menu items
+		menumask = 0x03;  // 2 menu items
 
 		m = 0;
 		OsdWrite(m++);
 		OsdWrite(m++, "  Download game artwork from:");
-		OsdWrite(m++, "  ScreenScraper, TheGamesDB,");
-		OsdWrite(m++, "  or SteamGridDB");
+		OsdWrite(m++, "  libretro-thumbnails");
+		OsdWrite(m++, "");
+		OsdWrite(m++, "  No API keys required!");
+		OsdWrite(m++, "");
+		OsdWrite(m++, " Scrape Current System     \x16", menusub == 0);
 		OsdWrite(m++, "");
 
-		{
-			scraper_config_t *cfg = scraper_get_config();
-
-			// Show source status
-			sprintf(s, " ScreenScraper:    %s",
-				scraper_source_configured(SCRAPER_SOURCE_SCREENSCRAPER) ? "Ready" : "Not configured");
-			OsdWrite(m++, s);
-			sprintf(s, " TheGamesDB:       %s",
-				scraper_source_configured(SCRAPER_SOURCE_THEGAMESDB) ? "Ready" : "Not configured");
-			OsdWrite(m++, s);
-			sprintf(s, " SteamGridDB:      %s",
-				scraper_source_configured(SCRAPER_SOURCE_STEAMGRIDDB) ? "Ready" : "Not configured");
-			OsdWrite(m++, s);
-
-			OsdWrite(m++, "");
-			sprintf(s, " Auto-scrape:         %s", cfg->auto_scrape ? "On " : "Off");
-			OsdWrite(m++, s, menusub == 0);
-
-			OsdWrite(m++, "");
-			OsdWrite(m++, " Scrape Current System     \x16", menusub == 1);
-			OsdWrite(m++, " Scrape All Systems        \x16", menusub == 2);
-			OsdWrite(m++, "");
-			OsdWrite(m++, " Edit API Keys             \x16", menusub == 3);
-		}
-
 		while(m < OsdGetSize()-1) OsdWrite(m++, "");
-		OsdWrite(15, STD_EXIT, menusub == 4);
+		OsdWrite(15, STD_EXIT, menusub == 1);
 		menustate = MENU_SCRAPER2;
 		break;
 
@@ -7028,16 +7170,6 @@ void HandleUI(void)
 			switch (menusub)
 			{
 			case 0:
-				// Toggle auto-scrape
-				{
-					scraper_config_t *cfg = scraper_get_config();
-					cfg->auto_scrape = !cfg->auto_scrape;
-					scraper_save_config();
-					menustate = MENU_SCRAPER1;
-				}
-				break;
-
-			case 1:
 				// Scrape current system (use boxart core name)
 				{
 					const char *core = boxart_get_core();
@@ -7048,26 +7180,13 @@ void HandleUI(void)
 					}
 					else
 					{
-						// No core loaded, show message
+						Info("No core loaded");
 						menustate = MENU_SCRAPER1;
 					}
 				}
 				break;
 
-			case 2:
-				// Scrape all systems
-				scraper_scrape_all();
-				menustate = MENU_SCRAPER_RUNNING;
-				break;
-
-			case 3:
-				// Edit API Keys - show info message
-				// For now, just tell user to edit config file
-				Info("Edit /media/fat/config/scraper.cfg");
-				menustate = MENU_SCRAPER1;
-				break;
-
-			case 4:
+			case 1:
 				menustate = MENU_SYSTEM1;
 				menusub = 6;
 				break;
@@ -7084,7 +7203,7 @@ void HandleUI(void)
 			m = 0;
 			OsdWrite(m++);
 
-			if (status == SCRAPER_RUNNING || status == SCRAPER_PAUSED)
+			if (status == SCRAPER_RUNNING)
 			{
 				sprintf(s, "  Progress: %d / %d", prog->processed, prog->total_games);
 				OsdWrite(m++, s);
@@ -7100,14 +7219,6 @@ void HandleUI(void)
 					strncpy(truncated, prog->current_game, 28);
 					truncated[28] = '\0';
 					sprintf(s, "  Current: %s", truncated);
-					OsdWrite(m++, s);
-				}
-
-				if (prog->eta_seconds > 0)
-				{
-					int mins = prog->eta_seconds / 60;
-					int secs = prog->eta_seconds % 60;
-					sprintf(s, "  ETA: %d:%02d", mins, secs);
 					OsdWrite(m++, s);
 				}
 			}

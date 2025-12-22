@@ -1154,7 +1154,6 @@ void FindStorage(void)
 		if (cfg.gfx_menu_enable)
 		{
 			gfx_menu_load_theme(cfg.gfx_menu_theme);
-			gfx_menu_set_view((gfx_view_type_t)cfg.gfx_menu_view);
 		}
 		
 		video_init();
