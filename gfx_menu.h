@@ -12,6 +12,8 @@
 typedef enum {
 	GFX_MODE_SYSTEMS = 0,   // Grid of system icons (SNES, Genesis, etc.)
 	GFX_MODE_GAMES,         // Grid of games for selected system
+	GFX_MODE_PREVIEW,       // Game preview/details before launching
+	GFX_MODE_SETTINGS,      // Settings menu
 	GFX_MODE_COUNT
 } gfx_menu_mode_t;
 

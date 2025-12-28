@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -12,6 +13,7 @@
 
 #include "boxart.h"
 #include "file_io.h"
+#include "cfg.h"
 #include "cfg.h"
 #include "video.h"
 #include "hardware.h"
@@ -42,6 +44,18 @@ static boxart_state_t boxart_state;
 // Timer for cache management
 static uint32_t cache_access_counter = 0;
 
+// Simple debug logger for boxart lookups (writes to /tmp/boxart_debug.log)
+static void boxart_log(const char *fmt, ...)
+{
+	FILE *f = fopen("/tmp/boxart_debug.log", "a");
+	if (!f) return;
+	va_list ap;
+	va_start(ap, fmt);
+	vfprintf(f, fmt, ap);
+	va_end(ap);
+	fclose(f);
+}
+
 // Forward declarations
 static int find_cache_slot(void);
 static int cache_lookup(const char *path);
@@ -58,8 +72,24 @@ void boxart_init(void)
 {
 	memset(&boxart_state, 0, sizeof(boxart_state));
 
-	// Set default base path
-	snprintf(boxart_state.base_path, BOXART_PATH_MAX, "%s/media", getRootDir());
+	// Set base path for artwork.
+	// Prefer the configured boxart_path (relative to /media/fat) to avoid
+	// switching to USB roots when games are on external storage.
+	const char *root = "/media/fat";
+	if (cfg.boxart_path[0])
+	{
+		if (cfg.boxart_path[0] == '/')
+			snprintf(boxart_state.base_path, BOXART_PATH_MAX, "%s", cfg.boxart_path);
+		else
+			snprintf(boxart_state.base_path, BOXART_PATH_MAX, "%s/%s", root, cfg.boxart_path);
+	}
+	else
+	{
+		snprintf(boxart_state.base_path, BOXART_PATH_MAX, "%s/media", root);
+	}
+
+	boxart_log("INIT base_path=%s boxart_enable=%d show_preview=%d\n",
+		boxart_state.base_path, cfg.boxart_enable, cfg.boxart_show_preview);
 
 	boxart_state.enabled = 1;
 	boxart_state.show_preview = 1;
@@ -107,6 +137,7 @@ void boxart_set_core(const char *core_name)
 		boxart_state.core_name[len - 4] = '\0';
 	}
 
+	boxart_log("SET_CORE core=%s\n", boxart_state.core_name);
 	printf("Boxart: Core set to '%s'\n", boxart_state.core_name);
 }
 
@@ -247,17 +278,19 @@ const char* boxart_get_path(const char *game_name, artwork_type_t type)
 
 	printf("Boxart: Looking for '%s' in core '%s'\n", game_name, boxart_state.core_name);
 	printf("Boxart: Clean name: '%s'\n", clean_name);
+	boxart_log("LOOKUP core=%s base=%s game=%s clean=%s name_no_ext=%s type=%d\n",
+		boxart_state.core_name, boxart_state.base_path, game_name, clean_name, name_no_ext, type);
 
 	// Try each image extension
 	for (int ext_idx = 0; image_extensions[ext_idx]; ext_idx++)
 	{
-		// Try 1: Clean name (most likely to match artwork)
-		// e.g., /media/fat/media/SNES/boxart/Donkey Kong Country.png
+		// Try 1: Exact filename without extension (matches most boxart naming)
+		// e.g., /media/fat/media/Genesis/boxart/Double Dragon (USA, Europe).png
 		snprintf(path_buf, sizeof(path_buf), "%s/%s/%s/%s%s",
 			boxart_state.base_path,
 			boxart_state.core_name,
 			artwork_dirs[type],
-			clean_name,
+			name_no_ext,
 			image_extensions[ext_idx]);
 
 		printf("Boxart: Trying path: %s\n", path_buf);
@@ -268,16 +301,18 @@ const char* boxart_get_path(const char *game_name, artwork_type_t type)
 			return path_buf;
 		}
 
-		// Try 2: Exact filename without extension
+		// Try 2: Clean name (without region codes, version tags)
+		// e.g., /media/fat/media/SNES/boxart/Donkey Kong Country.png
 		snprintf(path_buf, sizeof(path_buf), "%s/%s/%s/%s%s",
 			boxart_state.base_path,
 			boxart_state.core_name,
 			artwork_dirs[type],
-			name_no_ext,
+			clean_name,
 			image_extensions[ext_idx]);
 
 		if (file_exists(path_buf))
 		{
+			printf("Boxart: FOUND (clean name)!\n");
 			return path_buf;
 		}
 
@@ -292,6 +327,7 @@ const char* boxart_get_path(const char *game_name, artwork_type_t type)
 
 		if (file_exists(path_buf))
 		{
+			boxart_log("FOUND normalized %s\n", path_buf);
 			return path_buf;
 		}
 	}
@@ -307,10 +343,12 @@ const char* boxart_get_path(const char *game_name, artwork_type_t type)
 
 		if (file_exists(path_buf))
 		{
+			boxart_log("FOUND alt %s\n", path_buf);
 			return path_buf;
 		}
 	}
 
+	boxart_log("MISS core=%s game=%s clean=%s\n", boxart_state.core_name, game_name, clean_name);
 	return NULL;
 }
 
@@ -443,6 +481,7 @@ int boxart_load(const char *game_name, artwork_type_t type, boxart_result_t *res
 	result->type = type;
 	result->from_cache = 0;
 
+	boxart_log("LOAD_OK path=%s w=%d h=%d cache=%d\n", path, width, height, result->from_cache);
 	return 1;
 }
 

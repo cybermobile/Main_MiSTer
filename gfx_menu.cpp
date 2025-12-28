@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <linux/kd.h>
+#include <linux/fb.h>
 
 #include "gfx_menu.h"
 #include "video.h"
@@ -83,7 +84,9 @@ static void gfx_console_set_graphics_mode(int enable)
 
 // Forward declarations
 static void render_grid_view(Imlib_Image canvas);
+static void render_game_details_overlay(Imlib_Image canvas);
 static void render_systems_grid(Imlib_Image canvas);
+static void render_settings_menu(Imlib_Image canvas);
 static void render_search_overlay(Imlib_Image canvas);
 static void render_zaparoo_overlay(Imlib_Image canvas);
 static void render_header(Imlib_Image canvas);
@@ -93,6 +96,29 @@ static void draw_nfc_icon(Imlib_Image canvas, int x, int y, int size, gfx_color_
 static void draw_wifi_icon(Imlib_Image canvas, int x, int y, int size, gfx_color_t color);
 static void draw_ethernet_icon(Imlib_Image canvas, int x, int y, int size, gfx_color_t color);
 static void draw_controller_icon(Imlib_Image canvas, int x, int y, int size, gfx_color_t color);
+
+// Settings menu state
+static int settings_selected = 0;
+static gfx_menu_mode_t settings_previous_mode = GFX_MODE_SYSTEMS;
+#define SETTINGS_COUNT 7  // Theme, Boxart, Animations, Rescan, Scripts, Update All, Back
+
+// Theme selection
+static int current_theme_index = 0;
+#define THEME_COUNT 4
+static const char *theme_names[THEME_COUNT] = {
+	"Analogue Dark",
+	"Analogue Light", 
+	"Classic MiSTer",
+	"Retro CRT"
+};
+
+// Text scrolling state for long game names
+static int scroll_text_offset = 0;
+static uint32_t scroll_text_timer = 0;
+static int scroll_text_item = -1;  // Which item is being scrolled
+static int scroll_text_direction = 1;  // 1 = scroll left, -1 = scroll right
+#define SCROLL_TEXT_DELAY_MS 100
+#define SCROLL_TEXT_PAUSE_MS 1500  // Pause at ends
 
 // External function for network status
 extern char* getNet(int spec);
@@ -146,106 +172,158 @@ static void gfx_draw_text_truncated(Imlib_Image img, const char *text, int x, in
 	}
 }
 
-// Helper: Draw text with word wrapping over multiple lines
-// Returns number of lines rendered
-static int gfx_draw_text_wrapped(Imlib_Image img, const char *text, int x, int y, int max_width, int max_lines, int line_height, gfx_color_t color)
+// Helper: Draw scrolling text for selected item (marquee effect)
+// Returns the visible portion of text with scrolling animation
+static void gfx_draw_text_scrolling(Imlib_Image img, const char *text, int x, int y, int max_width, gfx_color_t color, int is_selected)
 {
-	if (!text || !img || max_width <= 0 || max_lines <= 0) return 0;
+	if (!text || !img || max_width <= 0) return;
 
-	const int char_width = 16; // 8 * 2 (scale factor)
-	int max_chars_per_line = max_width / char_width;
-	if (max_chars_per_line < 1) return 0;
+	const int char_width = 16;
+	int max_chars = max_width / char_width;
+	int text_len = strlen(text);
 
-	int lines_rendered = 0;
-	int current_y = y;
-	const char *ptr = text;
-	char line_buf[256];
-
-	while (*ptr && lines_rendered < max_lines)
-	{
-		// Find end of current line (word wrap)
-		int line_len = 0;
-		int last_space = -1;
-		const char *scan = ptr;
-
-		while (*scan && line_len < max_chars_per_line && *scan != '\n')
-		{
-			if (*scan == ' ') last_space = line_len;
-			scan++;
-			line_len++;
-		}
-
-		// If we hit a newline or end of string, use that length
-		if (*scan == '\n' || *scan == '\0')
-		{
-			// Use exact length
-		}
-		else if (last_space > 0 && line_len == max_chars_per_line)
-		{
-			// Word wrap at last space
-			line_len = last_space;
-		}
-
-		// Copy line to buffer
-		int copy_len = (line_len < 255) ? line_len : 255;
-		strncpy(line_buf, ptr, copy_len);
-		line_buf[copy_len] = '\0';
-
-		// Draw this line (truncate if on last line and more text remains)
-		if (lines_rendered == max_lines - 1 && ptr[line_len] != '\0' && ptr[line_len] != '\n')
-		{
-			// Last line with more text - add ellipsis
-			if (copy_len > 3) {
-				line_buf[copy_len - 3] = '.';
-				line_buf[copy_len - 2] = '.';
-				line_buf[copy_len - 1] = '.';
-			}
-		}
-
-		gfx_draw_text(img, line_buf, x, current_y, color);
-		lines_rendered++;
-		current_y += line_height;
-
-		// Move to next line
-		ptr += line_len;
-		if (*ptr == '\n') ptr++; // Skip newline
-		while (*ptr == ' ') ptr++; // Skip leading spaces
+	if (text_len <= max_chars || !is_selected) {
+		// Text fits or not selected, use normal truncation
+		gfx_draw_text_truncated(img, text, x, y, max_width, color);
+		return;
 	}
 
-	return lines_rendered;
+	// For selected item with long text, scroll it
+	uint32_t now = GetTimer(0);
+	
+	// Reset scroll if selection changed
+	if (scroll_text_item != menu_state.selected_index) {
+		scroll_text_item = menu_state.selected_index;
+		scroll_text_offset = 0;
+		scroll_text_direction = 1;
+		scroll_text_timer = now + SCROLL_TEXT_PAUSE_MS;  // Initial pause
+	}
+
+	// Update scroll position
+	if (now >= scroll_text_timer) {
+		int max_offset = text_len - max_chars;
+		
+		if (scroll_text_direction > 0) {
+			scroll_text_offset++;
+			if (scroll_text_offset >= max_offset) {
+				scroll_text_offset = max_offset;
+				scroll_text_direction = -1;
+				scroll_text_timer = now + SCROLL_TEXT_PAUSE_MS;  // Pause at end
+			} else {
+				scroll_text_timer = now + SCROLL_TEXT_DELAY_MS;
+			}
+		} else {
+			scroll_text_offset--;
+			if (scroll_text_offset <= 0) {
+				scroll_text_offset = 0;
+				scroll_text_direction = 1;
+				scroll_text_timer = now + SCROLL_TEXT_PAUSE_MS;  // Pause at start
+			} else {
+				scroll_text_timer = now + SCROLL_TEXT_DELAY_MS;
+			}
+		}
+		menu_state.needs_redraw = 1;  // Keep redrawing during scroll
+	}
+
+	// Draw the visible portion
+	char visible[256];
+	int copy_len = max_chars;
+	if (copy_len > 255) copy_len = 255;
+	strncpy(visible, text + scroll_text_offset, copy_len);
+	visible[copy_len] = '\0';
+	gfx_draw_text(img, visible, x, y, color);
+}
+
+// Apply theme by index
+static void apply_theme(int theme_index)
+{
+	memset(&default_theme, 0, sizeof(default_theme));
+	
+	// Common settings for all themes
+	strcpy(default_theme.font_name, "");
+	default_theme.font_size_title = 28;
+	default_theme.font_size_item = 20;
+	default_theme.font_size_info = 16;
+	default_theme.thumbnail_width = 100;
+	default_theme.thumbnail_height = 100;
+	default_theme.item_spacing = 12;
+	default_theme.panel_padding = 20;
+	default_theme.corner_radius = 4;
+	default_theme.background_image = NULL;
+	
+	switch (theme_index)
+	{
+		case 0:  // Analogue Dark (default)
+			strcpy(default_theme.name, "Analogue Dark");
+			default_theme.colors.background = gfx_color_hex(0xFF222222);
+			default_theme.colors.panel_bg = gfx_color_hex(0xE0181818);
+			default_theme.colors.panel_border = gfx_color_hex(0xFF333333);
+			default_theme.colors.text_primary = gfx_color_hex(0xFFcccccc);
+			default_theme.colors.text_secondary = gfx_color_hex(0xFF888888);
+			default_theme.colors.text_highlight = gfx_color_hex(0xFFffffff);
+			default_theme.colors.selection_bg = gfx_color_hex(0x30ffffff);
+			default_theme.colors.selection_border = gfx_color_hex(0xFFcccccc);
+			default_theme.colors.scrollbar_bg = gfx_color_hex(0x20ffffff);
+			default_theme.colors.scrollbar_fg = gfx_color_hex(0xFFcccccc);
+			break;
+			
+		case 1:  // Analogue Light
+			strcpy(default_theme.name, "Analogue Light");
+			default_theme.colors.background = gfx_color_hex(0xFFf5f5f5);
+			default_theme.colors.panel_bg = gfx_color_hex(0xE0ffffff);
+			default_theme.colors.panel_border = gfx_color_hex(0xFFdddddd);
+			default_theme.colors.text_primary = gfx_color_hex(0xFF333333);
+			default_theme.colors.text_secondary = gfx_color_hex(0xFF666666);
+			default_theme.colors.text_highlight = gfx_color_hex(0xFF000000);
+			default_theme.colors.selection_bg = gfx_color_hex(0x30000000);
+			default_theme.colors.selection_border = gfx_color_hex(0xFF333333);
+			default_theme.colors.scrollbar_bg = gfx_color_hex(0x20000000);
+			default_theme.colors.scrollbar_fg = gfx_color_hex(0xFF666666);
+			break;
+			
+		case 2:  // Classic MiSTer (blue theme)
+			strcpy(default_theme.name, "Classic MiSTer");
+			default_theme.colors.background = gfx_color_hex(0xFF1a1a2e);
+			default_theme.colors.panel_bg = gfx_color_hex(0xE016213e);
+			default_theme.colors.panel_border = gfx_color_hex(0xFF0f3460);
+			default_theme.colors.text_primary = gfx_color_hex(0xFFe0e0e0);
+			default_theme.colors.text_secondary = gfx_color_hex(0xFF94a3b8);
+			default_theme.colors.text_highlight = gfx_color_hex(0xFF00d4ff);
+			default_theme.colors.selection_bg = gfx_color_hex(0x400f3460);
+			default_theme.colors.selection_border = gfx_color_hex(0xFF00d4ff);
+			default_theme.colors.scrollbar_bg = gfx_color_hex(0x200f3460);
+			default_theme.colors.scrollbar_fg = gfx_color_hex(0xFF00d4ff);
+			break;
+			
+		case 3:  // Retro CRT (green phosphor)
+			strcpy(default_theme.name, "Retro CRT");
+			default_theme.colors.background = gfx_color_hex(0xFF0a0a0a);
+			default_theme.colors.panel_bg = gfx_color_hex(0xE0101010);
+			default_theme.colors.panel_border = gfx_color_hex(0xFF1a3a1a);
+			default_theme.colors.text_primary = gfx_color_hex(0xFF33ff33);
+			default_theme.colors.text_secondary = gfx_color_hex(0xFF228822);
+			default_theme.colors.text_highlight = gfx_color_hex(0xFF66ff66);
+			default_theme.colors.selection_bg = gfx_color_hex(0x3033ff33);
+			default_theme.colors.selection_border = gfx_color_hex(0xFF33ff33);
+			default_theme.colors.scrollbar_bg = gfx_color_hex(0x2033ff33);
+			default_theme.colors.scrollbar_fg = gfx_color_hex(0xFF33ff33);
+			break;
+			
+		default:
+			// Fall through to Analogue Dark
+			apply_theme(0);
+			return;
+	}
+	
+	current_theme_index = theme_index;
+	menu_state.theme = &default_theme;
+	menu_state.needs_redraw = 1;
 }
 
 // Initialize default theme with Analogue-inspired minimalist style
 static void init_default_theme(void)
 {
-	memset(&default_theme, 0, sizeof(default_theme));
-	strcpy(default_theme.name, "Analogue Dark");
-
-	// Analogue-inspired color palette - clean, minimalist dark theme
-	default_theme.colors.background = gfx_color_hex(0xFF222222);      // Clean dark gray
-	default_theme.colors.panel_bg = gfx_color_hex(0xE0181818);        // Subtle darker panel
-	default_theme.colors.panel_border = gfx_color_hex(0xFF333333);    // Subtle border
-	default_theme.colors.text_primary = gfx_color_hex(0xFFcccccc);    // High contrast light gray
-	default_theme.colors.text_secondary = gfx_color_hex(0xFF888888);  // Muted gray
-	default_theme.colors.text_highlight = gfx_color_hex(0xFFffffff);  // Pure white for emphasis
-	default_theme.colors.selection_bg = gfx_color_hex(0x30ffffff);    // Subtle white selection
-	default_theme.colors.selection_border = gfx_color_hex(0xFFcccccc); // Clean light border
-	default_theme.colors.scrollbar_bg = gfx_color_hex(0x20ffffff);    // Very subtle
-	default_theme.colors.scrollbar_fg = gfx_color_hex(0xFFcccccc);    // Visible but not harsh
-
-	// Font settings - larger for better readability
-	strcpy(default_theme.font_name, "");  // Use default
-	default_theme.font_size_title = 28;
-	default_theme.font_size_item = 20;
-	default_theme.font_size_info = 16;
-
-	// Layout settings - more generous spacing
-	default_theme.thumbnail_width = 100;
-	default_theme.thumbnail_height = 100;
-	default_theme.item_spacing = 12;
-	default_theme.panel_padding = 20;
-	default_theme.corner_radius = 4;  // Subtle rounded corners
-	default_theme.background_image = NULL;
+	apply_theme(0);  // Analogue Dark is the default
 }
 
 void gfx_menu_init(void)
@@ -464,22 +542,30 @@ void gfx_menu_select_next(void)
 		anim_cancel(selection_anim_id);
 	}
 
-	// Animate selection scale (subtle pop effect)
-	anim_selection_scale = 0.95f;
-	selection_anim_id = anim_create_to(&anim_selection_scale, 1.0f,
-	                                   SELECT_ANIM_DURATION, EASE_OUT_BACK);
-	if (selection_anim_id)
+	// Selection animation (skip if animations disabled)
+	if (cfg.anim_enable)
 	{
-		anim_start(selection_anim_id);
-	}
+		anim_selection_scale = 0.95f;
+		selection_anim_id = anim_create_to(&anim_selection_scale, 1.0f,
+		                                   SELECT_ANIM_DURATION, EASE_OUT_BACK);
+		if (selection_anim_id)
+		{
+			anim_start(selection_anim_id);
+		}
 
-	// Fade preview panel for new selection
-	if (preview_fade_id && anim_is_running(preview_fade_id))
-	{
-		anim_cancel(preview_fade_id);
+		// Fade preview panel for new selection
+		if (preview_fade_id && anim_is_running(preview_fade_id))
+		{
+			anim_cancel(preview_fade_id);
+		}
+		anim_preview_opacity = 0.7f;
+		preview_fade_id = anim_fade_in(&anim_preview_opacity, 0.2f);
 	}
-	anim_preview_opacity = 0.7f;
-	preview_fade_id = anim_fade_in(&anim_preview_opacity, 0.2f);
+	else
+	{
+		anim_selection_scale = 1.0f;
+		anim_preview_opacity = 1.0f;
+	}
 
 	// Update scroll to keep selection visible
 	gfx_menu_scroll_to(menu_state.selected_index);
@@ -505,22 +591,30 @@ void gfx_menu_select_prev(void)
 		anim_cancel(selection_anim_id);
 	}
 
-	// Animate selection scale (subtle pop effect)
-	anim_selection_scale = 0.95f;
-	selection_anim_id = anim_create_to(&anim_selection_scale, 1.0f,
-	                                   SELECT_ANIM_DURATION, EASE_OUT_BACK);
-	if (selection_anim_id)
+	// Selection animation (skip if animations disabled)
+	if (cfg.anim_enable)
 	{
-		anim_start(selection_anim_id);
-	}
+		anim_selection_scale = 0.95f;
+		selection_anim_id = anim_create_to(&anim_selection_scale, 1.0f,
+		                                   SELECT_ANIM_DURATION, EASE_OUT_BACK);
+		if (selection_anim_id)
+		{
+			anim_start(selection_anim_id);
+		}
 
-	// Fade preview panel for new selection
-	if (preview_fade_id && anim_is_running(preview_fade_id))
-	{
-		anim_cancel(preview_fade_id);
+		// Fade preview panel for new selection
+		if (preview_fade_id && anim_is_running(preview_fade_id))
+		{
+			anim_cancel(preview_fade_id);
+		}
+		anim_preview_opacity = 0.7f;
+		preview_fade_id = anim_fade_in(&anim_preview_opacity, 0.2f);
 	}
-	anim_preview_opacity = 0.7f;
-	preview_fade_id = anim_fade_in(&anim_preview_opacity, 0.2f);
+	else
+	{
+		anim_selection_scale = 1.0f;
+		anim_preview_opacity = 1.0f;
+	}
 
 	gfx_menu_scroll_to(menu_state.selected_index);
 	menu_state.needs_redraw = 1;
@@ -582,16 +676,23 @@ void gfx_menu_scroll_to(int index)
 		anim_cancel(scroll_anim_id);
 	}
 
-	// Create smooth scroll animation using animator system
-	scroll_anim_id = anim_create_to(&anim_scroll_offset, (float)target_offset,
-	                                SCROLL_ANIM_DURATION, EASE_OUT_CUBIC);
-	if (scroll_anim_id)
+	// Update scroll offset - immediately if animations disabled
+	if (!cfg.anim_enable)
 	{
-		anim_start(scroll_anim_id);
+		anim_scroll_offset = (float)target_offset;
+		menu_state.scroll_offset = target_offset;
 	}
-
-	// Also update immediate value for logic
-	menu_state.scroll_offset = target_offset;
+	else
+	{
+		// Create smooth scroll animation using animator system
+		scroll_anim_id = anim_create_to(&anim_scroll_offset, (float)target_offset,
+		                                SCROLL_ANIM_DURATION, EASE_OUT_CUBIC);
+		if (scroll_anim_id)
+		{
+			anim_start(scroll_anim_id);
+		}
+		menu_state.scroll_offset = target_offset;
+	}
 }
 
 int gfx_menu_get_selected_index(void)
@@ -613,6 +714,12 @@ void gfx_menu_set_mode(gfx_menu_mode_t mode)
 {
 	if (mode < GFX_MODE_COUNT)
 	{
+		// Save previous mode when switching to settings
+		if (mode == GFX_MODE_SETTINGS && menu_state.mode != GFX_MODE_SETTINGS)
+		{
+			settings_previous_mode = menu_state.mode;
+			settings_selected = 0;
+		}
 		menu_state.mode = mode;
 		menu_state.needs_redraw = 1;
 	}
@@ -986,14 +1093,19 @@ static void render_footer(Imlib_Image canvas)
 	switch (menu_state.mode)
 	{
 		case GFX_MODE_SYSTEMS:
-			controls = "[A] Select  [X] Refresh  [L/R] Page";
+			controls = "[A] Select  [Sel] Settings  [X] Refresh";
 			break;
 		case GFX_MODE_GAMES:
+			controls = "[A] Preview  [B] Back  [Sel] Settings  [Y] Fav";
+			break;
+		case GFX_MODE_PREVIEW:
+			controls = "[A] Launch  [B] Back  [Y] Fav";
+			break;
+		case GFX_MODE_SETTINGS:
+			controls = "[A] Toggle  [B] Close";
+			break;
 		default:
-			if (menu_state.show_favorites_only)
-				controls = "[A] Play  [B] Back  [Sel] All  [Y] Fav";
-			else
-				controls = "[A] Play  [B] Back  [Sel] Favs  [Y] Fav  [X] Refresh";
+			controls = "[A] Select  [B] Back";
 			break;
 	}
 
@@ -1052,284 +1164,6 @@ static void render_scrollbar(Imlib_Image canvas, gfx_rect_t bounds)
 
 	gfx_rect_t thumb = { sb_bg.x + 2, thumb_y, SCROLLBAR_WIDTH - 4, thumb_height };
 	draw_filled_rect(canvas, thumb, theme->colors.scrollbar_fg);
-}
-
-// Render list view (main view mode)
-static void render_list_view(Imlib_Image canvas)
-{
-	gfx_theme_t *theme = menu_state.theme;
-	int panel_padding = theme->panel_padding;
-	int item_spacing = theme->item_spacing;
-	int thumb_size = theme->thumbnail_height;
-
-	// Left panel bounds (file list)
-	int list_width = (int)(fb_width * LIST_PANEL_WIDTH_RATIO);
-	gfx_rect_t list_bounds = {
-		panel_padding,
-		HEADER_HEIGHT + panel_padding,
-		list_width - panel_padding * 2,
-		fb_height - HEADER_HEIGHT - FOOTER_HEIGHT - panel_padding * 2
-	};
-
-	// List panel background
-	gfx_rect_t panel_rect = { 0, HEADER_HEIGHT, list_width, fb_height - HEADER_HEIGHT - FOOTER_HEIGHT };
-	draw_filled_rect(canvas, panel_rect, theme->colors.panel_bg);
-
-	// Calculate visible items
-	int item_height = thumb_size + item_spacing;
-	menu_state.visible_count = list_bounds.h / item_height;
-
-	// Use animated scroll offset for smooth scrolling
-	int display_scroll = (int)anim_scroll_offset;
-	float scroll_frac = anim_scroll_offset - (float)display_scroll;
-	int y_offset = (int)(scroll_frac * item_height);
-
-	// Render items (render one extra for smooth scrolling)
-	int y = list_bounds.y - y_offset;
-	int items_to_render = menu_state.visible_count + 1;
-	for (int i = 0; i < items_to_render && (display_scroll + i) < menu_state.item_count; i++)
-	{
-		int item_idx = display_scroll + i;
-		if (item_idx < 0) continue;
-		gfx_menu_item_t *item = &items_storage[item_idx];
-
-		gfx_rect_t item_rect = { list_bounds.x, y, list_bounds.w - SCROLLBAR_WIDTH - 4, thumb_size };
-
-		// Skip items outside visible bounds
-		if (item_rect.y + item_rect.h < list_bounds.y || item_rect.y > list_bounds.y + list_bounds.h)
-		{
-			y += item_height;
-			continue;
-		}
-
-		// Selection highlight with animated scale
-		if (item_idx == menu_state.selected_index)
-		{
-			// Apply scale animation to selection box
-			int scale_offset = (int)((1.0f - anim_selection_scale) * item_rect.w * 0.5f);
-			gfx_rect_t sel_rect = {
-				item_rect.x - scale_offset,
-				item_rect.y - (int)((1.0f - anim_selection_scale) * item_rect.h * 0.5f),
-				item_rect.w + scale_offset * 2,
-				item_rect.h + (int)((1.0f - anim_selection_scale) * item_rect.h)
-			};
-			draw_filled_rect(canvas, sel_rect, theme->colors.selection_bg);
-			draw_rect_border(canvas, sel_rect, theme->colors.selection_border, 2);
-		}
-
-		// Item type indicator (folder icon for folders/back only)
-		if (item->type == GFX_ITEM_FOLDER || item->type == GFX_ITEM_BACK)
-		{
-			gfx_rect_t folder_icon = { item_rect.x + 8, item_rect.y + thumb_size/2 - 8, 16, 16 };
-			draw_filled_rect(canvas, folder_icon, theme->colors.text_secondary);
-		}
-
-		// Favorite star indicator
-		if (item->is_favorite)
-		{
-			gfx_rect_t star = { item_rect.x + item_rect.w - 24, item_rect.y + 8, 16, 16 };
-			draw_filled_rect(canvas, star, theme->colors.text_highlight);
-		}
-
-		// Name text (truncated to fit within list panel)
-		gfx_color_t text_color = (item_idx == menu_state.selected_index) ?
-		                         theme->colors.text_highlight : theme->colors.text_primary;
-		int text_x = item_rect.x + 10; // No thumbnail, start text closer to left
-		int text_y = item_rect.y + (thumb_size - 16) / 2; // Vertically center text
-		int text_max_width = list_width - text_x - SCROLLBAR_WIDTH - 10; // Leave room for scrollbar
-		gfx_draw_text_truncated(canvas, item->name, text_x, text_y, text_max_width, text_color);
-
-		y += item_height;
-	}
-
-	// Scrollbar
-	render_scrollbar(canvas, list_bounds);
-}
-
-// Render preview panel (right side with large boxart and game details)
-// Inspired by Analogue 3D Library view
-static void render_preview_panel(Imlib_Image canvas)
-{
-	gfx_theme_t *theme = menu_state.theme;
-	int panel_padding = theme->panel_padding;
-
-	int list_width = (int)(fb_width * LIST_PANEL_WIDTH_RATIO);
-	int preview_x = list_width + panel_padding;
-	int preview_width = fb_width - list_width - panel_padding * 2;
-	int preview_height = fb_height - HEADER_HEIGHT - FOOTER_HEIGHT - panel_padding * 2;
-
-	gfx_rect_t preview_bounds = {
-		preview_x,
-		HEADER_HEIGHT + panel_padding,
-		preview_width,
-		preview_height
-	};
-
-	// Preview panel background with animated opacity
-	gfx_rect_t panel_bg = { list_width, HEADER_HEIGHT, fb_width - list_width, fb_height - HEADER_HEIGHT - FOOTER_HEIGHT };
-	gfx_color_t bg = theme->colors.panel_bg;
-	bg.a = (uint8_t)(180 * anim_preview_opacity);
-	draw_filled_rect(canvas, panel_bg, bg);
-
-	// Get selected item
-	gfx_menu_item_t *selected = gfx_menu_get_selected_item();
-	if (!selected) return;
-
-	// For folders, show folder info
-	if (selected->type == GFX_ITEM_FOLDER || selected->type == GFX_ITEM_BACK)
-	{
-		// Folder icon placeholder
-		int icon_size = 80;
-		gfx_rect_t folder_icon = {
-			preview_bounds.x + (preview_bounds.w - icon_size) / 2,
-			preview_bounds.y + preview_bounds.h / 3,
-			icon_size, icon_size
-		};
-		draw_filled_rect(canvas, folder_icon, theme->colors.text_secondary);
-
-		// Folder name
-		int name_width = strlen(selected->name) * 10;
-		if (name_width > preview_bounds.w - 40) name_width = preview_bounds.w - 40;
-		gfx_rect_t folder_name = {
-			preview_bounds.x + (preview_bounds.w - name_width) / 2,
-			folder_icon.y + icon_size + 20,
-			name_width, 20
-		};
-		draw_filled_rect(canvas, folder_name, theme->colors.text_primary);
-		return;
-	}
-
-	// Render large boxart preview
-	Imlib_Image boxart = boxart_get_preview_image();
-	int boxart_bottom = preview_bounds.y + panel_padding;
-
-	if (boxart)
-	{
-		imlib_context_set_image(boxart);
-		int src_w = imlib_image_get_width();
-		int src_h = imlib_image_get_height();
-
-		// Calculate scaled size maintaining aspect ratio
-		int max_w = preview_bounds.w - panel_padding * 2;
-		int max_h = (int)(preview_bounds.h * 0.55f);  // Leave more room for detailed info
-
-		float scale_x = (float)max_w / (float)src_w;
-		float scale_y = (float)max_h / (float)src_h;
-		float scale = (scale_x < scale_y) ? scale_x : scale_y;
-
-		int dst_w = (int)(src_w * scale);
-		int dst_h = (int)(src_h * scale);
-		int dst_x = preview_bounds.x + (preview_bounds.w - dst_w) / 2;
-		int dst_y = preview_bounds.y + panel_padding;
-
-		// Draw boxart with shadow
-		gfx_rect_t shadow = { dst_x + 4, dst_y + 4, dst_w, dst_h };
-		gfx_color_t shadow_color = gfx_color_hex(0x40000000);
-		draw_filled_rect(canvas, shadow, shadow_color);
-
-		// Blend boxart
-		imlib_context_set_image(canvas);
-		imlib_context_set_blend(1);
-		imlib_blend_image_onto_image(boxart, 1,
-			0, 0, src_w, src_h,
-			dst_x, dst_y, dst_w, dst_h);
-
-		// Subtle border around boxart
-		gfx_rect_t border = { dst_x - 1, dst_y - 1, dst_w + 2, dst_h + 2 };
-		draw_rect_border(canvas, border, theme->colors.panel_border, 1);
-
-		boxart_bottom = dst_y + dst_h + panel_padding;
-	}
-
-	// Game info area - description below boxart
-	int info_y = boxart_bottom + 10;
-	int info_x = preview_bounds.x + panel_padding;
-	int info_width = preview_bounds.w - panel_padding * 2;
-	int line_height = 20; // Line height for description text
-
-	// Try to get game metadata from database
-	gamedb_entry_t *game_info = NULL;
-	if (cfg.gamedb_enable && selected->path[0])
-	{
-		game_info = gamedb_lookup_filename(selected->path);
-	}
-
-	// Show game description if available
-	if (game_info && game_info->description[0])
-	{
-		// Render description text (word-wrapped would be ideal, but for now truncate per line)
-		gfx_draw_text_truncated(canvas, game_info->description, info_x, info_y, info_width, theme->colors.text_secondary);
-		info_y += line_height * 2;
-	}
-
-	// Developer / Year info on one line
-	if (game_info && (game_info->developer[0] || game_info->year > 0))
-	{
-		char info_line[256] = "";
-		if (game_info->developer[0])
-		{
-			snprintf(info_line, sizeof(info_line), "%s", game_info->developer);
-		}
-		if (game_info->year > 0)
-		{
-			char year_str[16];
-			snprintf(year_str, sizeof(year_str), info_line[0] ? " (%d)" : "%d", game_info->year);
-			strncat(info_line, year_str, sizeof(info_line) - strlen(info_line) - 1);
-		}
-		if (info_line[0])
-		{
-			gfx_draw_text_truncated(canvas, info_line, info_x, info_y, info_width, theme->colors.text_secondary);
-			info_y += line_height;
-		}
-	}
-
-	// Playtime section (Analogue Library inspired)
-	playtime_entry_t *playtime = playtime_get_entry(selected->path);
-	if (playtime && playtime->total_seconds > 0)
-	{
-		// Separator
-		gfx_rect_t sep2 = { info_x, info_y, info_width, 1 };
-		draw_filled_rect(canvas, sep2, theme->colors.panel_border);
-		info_y += 12;
-
-		// Playtime label and value
-		gfx_rect_t pt_label = { info_x, info_y + 4, 70, 16 };
-		draw_filled_rect(canvas, pt_label, theme->colors.text_secondary);
-
-		char playtime_str[32];
-		playtime_format_duration(playtime->total_seconds, playtime_str, sizeof(playtime_str));
-		int pt_width = strlen(playtime_str) * 10;
-		gfx_rect_t pt_val = { info_x + 80, info_y + 4, pt_width, 16 };
-		draw_filled_rect(canvas, pt_val, theme->colors.text_primary);
-		info_y += line_height;
-
-		// Last played
-		if (playtime->last_played > 0)
-		{
-			gfx_rect_t lp_label = { info_x, info_y + 4, 90, 16 };
-			draw_filled_rect(canvas, lp_label, theme->colors.text_secondary);
-
-			char last_played_str[64];
-			playtime_format_relative_time(playtime->last_played, last_played_str, sizeof(last_played_str));
-			int lp_width = strlen(last_played_str) * 8;
-			gfx_rect_t lp_val = { info_x + 100, info_y + 4, lp_width, 16 };
-			draw_filled_rect(canvas, lp_val, theme->colors.text_primary);
-			info_y += line_height;
-		}
-
-		// Play count
-		if (playtime->play_count > 1)
-		{
-			gfx_rect_t pc_label = { info_x, info_y + 4, 80, 16 };
-			draw_filled_rect(canvas, pc_label, theme->colors.text_secondary);
-
-			char count_str[16];
-			snprintf(count_str, sizeof(count_str), "%u times", playtime->play_count);
-			int pc_width = strlen(count_str) * 8;
-			gfx_rect_t pc_val = { info_x + 90, info_y + 4, pc_width, 16 };
-			draw_filled_rect(canvas, pc_val, theme->colors.text_primary);
-		}
-	}
 }
 
 // Render systems grid (system selection screen)
@@ -1399,12 +1233,11 @@ static void render_systems_grid(Imlib_Image canvas)
 		name_bg.a = 220;
 		draw_filled_rect(canvas, name_bar, name_bg);
 
-		// System name text (centered)
+		// System name text (centered, with truncation for long names)
 		gfx_color_t name_color = (item_idx == menu_state.selected_index) ?
 		                         theme->colors.text_highlight : theme->colors.text_primary;
-		int text_x = cell.x + (cell.w - (int)strlen(item->name) * 16) / 2;
-		if (text_x < cell.x + 8) text_x = cell.x + 8;
-		gfx_draw_text(canvas, item->name, text_x, cell.y + cell.h - 28, name_color);
+		int text_max_width = cell.w - 16;  // Padding on both sides
+		gfx_draw_text_truncated(canvas, item->name, cell.x + 8, cell.y + cell.h - 28, text_max_width, name_color);
 
 		// Move to next cell
 		col++;
@@ -1416,6 +1249,300 @@ static void render_systems_grid(Imlib_Image canvas)
 			y += cell_size + cell_spacing;
 		}
 	}
+}
+
+// Run a script in background
+static void run_script(const char *script_path)
+{
+	char cmd[512];
+	snprintf(cmd, sizeof(cmd), "%s &", script_path);
+	system(cmd);
+}
+
+// Render settings menu
+static void render_settings_menu(Imlib_Image canvas)
+{
+	gfx_theme_t *theme = menu_state.theme;
+	
+	// Center the settings menu
+	int menu_width = 500;
+	int menu_height = 420;
+	int menu_x = (fb_width - menu_width) / 2;
+	int menu_y = (fb_height - menu_height) / 2;
+	
+	// Dark overlay
+	gfx_rect_t overlay = { 0, 0, fb_width, fb_height };
+	gfx_color_t overlay_color = { 180, 0, 0, 0 };  // Semi-transparent black
+	draw_filled_rect(canvas, overlay, overlay_color);
+	
+	// Menu panel
+	gfx_rect_t panel = { menu_x, menu_y, menu_width, menu_height };
+	draw_filled_rect(canvas, panel, theme->colors.panel_bg);
+	draw_rect_border(canvas, panel, theme->colors.panel_border, 3);
+	
+	// Title
+	gfx_draw_text(canvas, "Settings", menu_x + 20, menu_y + 20, theme->colors.text_primary);
+	
+	// Settings items - with theme selection
+	const char *labels[] = {
+		"Theme",
+		"Boxart",
+		"Animations", 
+		"Rescan Library",
+		"Run Update All",
+		"WiFi Setup",
+		"Back"
+	};
+	
+	// Build values array with theme name
+	char theme_value[64];
+	snprintf(theme_value, sizeof(theme_value), "< %s >", theme_names[current_theme_index]);
+	
+	const char *values[SETTINGS_COUNT];
+	values[0] = theme_value;
+	values[1] = cfg.boxart_enable ? "ON" : "OFF";
+	values[2] = cfg.anim_enable ? "ON" : "OFF";
+	values[3] = "";
+	values[4] = "";
+	values[5] = "";
+	values[6] = "";
+	
+	int item_height = 48;
+	int item_y = menu_y + 60;
+	
+	for (int i = 0; i < SETTINGS_COUNT; i++)
+	{
+		gfx_rect_t item_rect = { menu_x + 20, item_y, menu_width - 40, item_height - 10 };
+		
+		// Highlight selected item
+		if (i == settings_selected)
+		{
+			draw_filled_rect(canvas, item_rect, theme->colors.selection_bg);
+			draw_rect_border(canvas, item_rect, theme->colors.selection_border, 2);
+		}
+		
+		// Label
+		gfx_draw_text(canvas, labels[i], menu_x + 30, item_y + 12, theme->colors.text_primary);
+		
+		// Value (right-aligned)
+		if (values[i][0])
+		{
+			int val_x = menu_x + menu_width - 180;
+			gfx_color_t val_color;
+			if (i == 0) {
+				// Theme name - use highlight color
+				val_color = theme->colors.text_highlight;
+			} else if (strcmp(values[i], "ON") == 0) {
+				val_color = gfx_color_rgba(100, 255, 100, 255);
+			} else if (strcmp(values[i], "OFF") == 0) {
+				val_color = gfx_color_rgba(255, 100, 100, 255);
+			} else {
+				val_color = theme->colors.text_secondary;
+			}
+			gfx_draw_text(canvas, values[i], val_x, item_y + 12, val_color);
+		}
+		
+		item_y += item_height;
+	}
+	
+	// Instructions
+	gfx_draw_text(canvas, "[A] Select  [B] Close  [</>] Change", menu_x + 20, menu_y + menu_height - 35, theme->colors.text_secondary);
+}
+
+// Render full-screen game details overlay
+static void render_game_details_overlay(Imlib_Image canvas)
+{
+	gfx_theme_t *theme = menu_state.theme;
+	
+	// Dark background overlay
+	gfx_rect_t overlay = { 0, 0, fb_width, fb_height };
+	gfx_color_t overlay_color = { 230, 0, 0, 0 };  // Semi-transparent black
+	draw_filled_rect(canvas, overlay, overlay_color);
+	
+	// Get selected item
+	gfx_menu_item_t *selected = gfx_menu_get_selected_item();
+	if (!selected) return;
+	
+	// Layout: Left side = large boxart, Right side = info
+	int content_y = HEADER_HEIGHT + 30;
+	int content_height = fb_height - HEADER_HEIGHT - FOOTER_HEIGHT - 60;
+	int content_width = fb_width - 60;
+	int content_x = 30;
+	
+	// Boxart area (left 45%)
+	int boxart_area_width = (int)(content_width * 0.45f);
+	int boxart_x = content_x;
+	
+	// Info area (right 50%)
+	int info_x = content_x + boxart_area_width + 40;
+	int info_width = content_width - boxart_area_width - 40;
+	
+	// Render large boxart
+	Imlib_Image boxart = boxart_get_preview_image();
+	if (boxart)
+	{
+		imlib_context_set_image(boxart);
+		int src_w = imlib_image_get_width();
+		int src_h = imlib_image_get_height();
+		
+		// Calculate scaled size maintaining aspect ratio
+		int max_w = boxart_area_width - 20;
+		int max_h = content_height - 40;
+		
+		float scale_x = (float)max_w / (float)src_w;
+		float scale_y = (float)max_h / (float)src_h;
+		float scale = (scale_x < scale_y) ? scale_x : scale_y;
+		
+		int dst_w = (int)(src_w * scale);
+		int dst_h = (int)(src_h * scale);
+		int dst_x = boxart_x + (boxart_area_width - dst_w) / 2;
+		int dst_y = content_y + (content_height - dst_h) / 2;
+		
+		// Shadow
+		gfx_rect_t shadow = { dst_x + 6, dst_y + 6, dst_w, dst_h };
+		draw_filled_rect(canvas, shadow, gfx_color_hex(0x60000000));
+		
+		// Blend boxart
+		imlib_context_set_image(canvas);
+		imlib_context_set_blend(1);
+		imlib_blend_image_onto_image(boxart, 1,
+			0, 0, src_w, src_h,
+			dst_x, dst_y, dst_w, dst_h);
+		
+		// Border
+		gfx_rect_t border = { dst_x - 2, dst_y - 2, dst_w + 4, dst_h + 4 };
+		draw_rect_border(canvas, border, theme->colors.selection_border, 3);
+	}
+	else
+	{
+		// No boxart placeholder
+		gfx_rect_t placeholder = { boxart_x + 20, content_y + 40, boxart_area_width - 40, content_height - 80 };
+		draw_filled_rect(canvas, placeholder, theme->colors.panel_bg);
+		draw_rect_border(canvas, placeholder, theme->colors.panel_border, 2);
+		
+		int text_x = placeholder.x + (placeholder.w - 12 * 16) / 2;
+		gfx_draw_text(canvas, "No Artwork", text_x, placeholder.y + placeholder.h / 2, theme->colors.text_secondary);
+	}
+	
+	// Right side: Game info
+	int info_y = content_y;
+	int line_height = 24;
+	
+	// Game title (large)
+	gfx_draw_text(canvas, selected->name, info_x, info_y, theme->colors.text_highlight);
+	info_y += line_height + 20;
+	
+	// Separator line
+	gfx_rect_t sep1 = { info_x, info_y, info_width, 2 };
+	draw_filled_rect(canvas, sep1, theme->colors.panel_border);
+	info_y += 20;
+	
+	// Try to get game metadata from database
+	gamedb_entry_t *game_info = NULL;
+	if (cfg.gamedb_enable && selected->path[0])
+	{
+		game_info = gamedb_lookup_filename(selected->path);
+	}
+	
+	// Developer / Year
+	if (game_info && (game_info->developer[0] || game_info->year > 0))
+	{
+		char info_line[256] = "";
+		if (game_info->developer[0])
+		{
+			snprintf(info_line, sizeof(info_line), "Developer: %s", game_info->developer);
+			gfx_draw_text(canvas, info_line, info_x, info_y, theme->colors.text_primary);
+			info_y += line_height;
+		}
+		if (game_info->year > 0)
+		{
+			snprintf(info_line, sizeof(info_line), "Year: %d", game_info->year);
+			gfx_draw_text(canvas, info_line, info_x, info_y, theme->colors.text_primary);
+			info_y += line_height;
+		}
+		info_y += 10;
+	}
+	
+	// Genre
+	if (game_info && game_info->genre != GENRE_UNKNOWN)
+	{
+		char genre_line[256];
+		snprintf(genre_line, sizeof(genre_line), "Genre: %s", gamedb_genre_name(game_info->genre));
+		gfx_draw_text(canvas, genre_line, info_x, info_y, theme->colors.text_primary);
+		info_y += line_height + 10;
+	}
+	
+	// Description
+	if (game_info && game_info->description[0])
+	{
+		gfx_draw_text(canvas, "Description:", info_x, info_y, theme->colors.text_secondary);
+		info_y += line_height;
+		
+		// Word-wrap description (simple approach: truncate per line)
+		const char *desc = game_info->description;
+		int max_chars = info_width / 16;
+		int lines_drawn = 0;
+		int max_lines = 6;
+		
+		while (*desc && lines_drawn < max_lines)
+		{
+			char line_buf[256];
+			int i = 0;
+			while (*desc && i < max_chars - 1 && i < 255)
+			{
+				if (*desc == '\n') { desc++; break; }
+				line_buf[i++] = *desc++;
+			}
+			line_buf[i] = '\0';
+			
+			// Try to break at word boundary
+			if (*desc && i == max_chars - 1)
+			{
+				int j = i - 1;
+				while (j > 0 && line_buf[j] != ' ') j--;
+				if (j > 0)
+				{
+					desc -= (i - j - 1);
+					line_buf[j] = '\0';
+				}
+			}
+			
+			gfx_draw_text(canvas, line_buf, info_x, info_y, theme->colors.text_primary);
+			info_y += line_height - 4;
+			lines_drawn++;
+		}
+		
+		if (*desc)
+		{
+			gfx_draw_text(canvas, "...", info_x, info_y, theme->colors.text_secondary);
+		}
+	}
+	else
+	{
+		// No description available
+		gfx_draw_text(canvas, "No description available", info_x, info_y, theme->colors.text_secondary);
+	}
+	
+	// Bottom: Launch hint
+	int hint_y = fb_height - FOOTER_HEIGHT - 50;
+	gfx_rect_t hint_bg = { info_x - 10, hint_y - 10, info_width + 20, 40 };
+	gfx_color_t hint_bg_color = theme->colors.selection_bg;
+	hint_bg_color.a = 200;
+	draw_filled_rect(canvas, hint_bg, hint_bg_color);
+	draw_rect_border(canvas, hint_bg, theme->colors.selection_border, 2);
+	
+	gfx_draw_text(canvas, "Press [A] to Launch Game", info_x + 10, hint_y, theme->colors.text_highlight);
+	
+	// Favorite indicator
+	if (selected->is_favorite)
+	{
+		gfx_color_t star_color = gfx_color_rgba(255, 215, 0, 255);  // Gold
+		gfx_draw_text(canvas, "* Favorite", info_x + info_width - 150, content_y, star_color);
+	}
+	
+	// Render header and footer
+	render_header(canvas);
+	render_footer(canvas);
 }
 
 // Render grid view (games)
@@ -1503,10 +1630,11 @@ static void render_grid_view(Imlib_Image canvas)
 		name_bg.a = 200;
 		draw_filled_rect(canvas, name_bar, name_bg);
 
-		// Game name text
+		// Game name text - use scrolling for selected item if text is long
 		gfx_color_t name_color = (item_idx == menu_state.selected_index) ?
 		                         theme->colors.text_highlight : theme->colors.text_primary;
-		gfx_draw_text_truncated(canvas, item->name, cell.x + 4, cell.y + cell.h - 20, cell.w - 8, name_color);
+		int is_selected = (item_idx == menu_state.selected_index);
+		gfx_draw_text_scrolling(canvas, item->name, cell.x + 4, cell.y + cell.h - 20, cell.w - 8, name_color, is_selected);
 
 		// Move to next cell
 		col++;
@@ -1957,7 +2085,6 @@ void gfx_menu_render(void)
 {
 	static Imlib_Image render_buffer = NULL;
 	static int last_width = 0, last_height = 0;
-	static unsigned long last_render_time = 0;
 
 	if (!menu_state.enabled) return;
 
@@ -1976,15 +2103,12 @@ void gfx_menu_render(void)
 		return;
 	}
 
-	// Frame rate limiter: max ~30fps (33ms between frames) to reduce CPU load
-	unsigned long now = GetTimer(0);
-	if (now - last_render_time < 33 && !menu_state.needs_redraw) {
-		// Just keep current buffer displayed, skip expensive work
+	// Skip rendering if nothing changed - but don't use artificial timing
+	if (!menu_state.needs_redraw) {
 		video_fb_enable(1, gfx_fb_front);
 		OsdDisable();
 		return;
 	}
-	last_render_time = now;
 	// Create or recreate render buffer if size changed
 	if (!render_buffer || last_width != fb_width || last_height != fb_height) {
 		if (render_buffer) {
@@ -2018,6 +2142,17 @@ void gfx_menu_render(void)
 				render_systems_grid(canvas);
 				break;
 			case GFX_MODE_GAMES:
+				render_grid_view(canvas);
+				break;
+			case GFX_MODE_PREVIEW:
+				// Show full-screen game preview with boxart and details
+				render_game_details_overlay(canvas);
+				break;
+			case GFX_MODE_SETTINGS:
+				// Render underlying view first, then settings overlay
+				render_grid_view(canvas);
+				render_settings_menu(canvas);
+				break;
 			default:
 				render_grid_view(canvas);
 				break;
@@ -2042,6 +2177,14 @@ void gfx_menu_render(void)
 		}
 
 		menu_state.needs_redraw = 0;
+		
+		// Wait for vsync before buffer swap to prevent tearing/flickering
+		int fb_fd = open("/dev/fb0", O_RDWR);
+		if (fb_fd >= 0) {
+			int zero = 0;
+			ioctl(fb_fd, FBIO_WAITFORVSYNC, &zero);
+			close(fb_fd);
+		}
 		
 		// Swap buffers
 		video_fb_enable(1, back);
@@ -2367,18 +2510,21 @@ int gfx_menu_handle_input(int key)
 {
 	if (!menu_state.enabled) return 0;
 
-	// Define key codes (keyboard scancodes used by menu system)
-	#define KEY_UP_LOCAL     0x48
-	#define KEY_DOWN_LOCAL   0x50
-	#define KEY_LEFT_LOCAL   0x4B
-	#define KEY_RIGHT_LOCAL  0x4D
-	#define KEY_ENTER_LOCAL  0x1C  // A button
-	#define KEY_ESC_LOCAL    0x01  // B button
-	#define KEY_PGUP_LOCAL   0x49  // L shoulder (Page Up)
-	#define KEY_PGDN_LOCAL   0x51  // R shoulder (Page Down)
-	#define KEY_Y_LOCAL      0x15  // Y key for toggle favorite
-	#define KEY_X_LOCAL      0x2D  // X key for refresh
-	#define KEY_SELECT_LOCAL 0x0F  // Select/Tab for favorites filter
+	// Define key codes (Linux keycodes used by menu system)
+	#define KEY_UP_LOCAL     103   // KEY_UP
+	#define KEY_DOWN_LOCAL   108   // KEY_DOWN
+	#define KEY_LEFT_LOCAL   105   // KEY_LEFT
+	#define KEY_RIGHT_LOCAL  106   // KEY_RIGHT
+	#define KEY_ENTER_LOCAL  28    // KEY_ENTER (A button)
+	#define KEY_ESC_LOCAL    1     // KEY_ESC
+	#define KEY_BACK_LOCAL   158   // KEY_BACK (B button)
+	#define KEY_BACKSPACE_LOCAL 14 // KEY_BACKSPACE
+	#define KEY_PGUP_LOCAL   104   // KEY_PAGEUP (L shoulder)
+	#define KEY_PGDN_LOCAL   109   // KEY_PAGEDOWN (R shoulder)
+	#define KEY_Y_LOCAL      21    // KEY_Y
+	#define KEY_X_LOCAL      45    // KEY_X
+	#define KEY_TAB_LOCAL    15    // KEY_TAB (Select button)
+	#define KEY_GRAVE_LOCAL  41    // KEY_GRAVE (Select on controller)
 
 	// Handle input based on current mode
 	switch (menu_state.mode)
@@ -2419,13 +2565,26 @@ int gfx_menu_handle_input(int key)
 					// X button: refresh library
 					request_refresh();
 					return 1;
+				case KEY_TAB_LOCAL:
+				case KEY_GRAVE_LOCAL:
+					// Select/Tab button: open settings menu
+					settings_selected = 0;
+					settings_previous_mode = menu_state.mode;
+					menu_state.mode = GFX_MODE_SETTINGS;
+					menu_state.needs_redraw = 1;
+					return 1;
+				case KEY_ESC_LOCAL:
+				case KEY_BACK_LOCAL:
+				case KEY_BACKSPACE_LOCAL:
+					// B button in systems view: consume but don't exit
+					// We're already at the top level, don't go back to wallpaper
+					return 1;
 				default:
 					break;
 			}
 			break;
 
 		case GFX_MODE_GAMES:
-		default:
 			// Game selection grid - proper 2D navigation
 			switch (key)
 			{
@@ -2455,22 +2614,145 @@ int gfx_menu_handle_input(int key)
 					// X button: refresh library
 					request_refresh();
 					return 1;
-				case KEY_SELECT_LOCAL:
-					// Select button: toggle favorites filter
-					toggle_favorites_filter();
+				case KEY_TAB_LOCAL:
+				case KEY_GRAVE_LOCAL:
+					// Select/Tab button: open settings menu
+					settings_selected = 0;
+					settings_previous_mode = menu_state.mode;
+					menu_state.mode = GFX_MODE_SETTINGS;
+					menu_state.needs_redraw = 1;
 					return 1;
 				case KEY_ESC_LOCAL:
+				case KEY_BACK_LOCAL:
+				case KEY_BACKSPACE_LOCAL:
 					// B button: go back to system selection
 					menu_state.show_favorites_only = 0;  // Clear filter when going back
 					gfx_menu_show_systems();
 					return 1;
 				case KEY_ENTER_LOCAL:
-					// A button: launch game (MGL) - handled by caller
-					// Return 0 to let menu.cpp handle the launch
-					break;
+					// A button: launch game directly (no preview step)
+					// Disable graphical menu so core takes over
+					gfx_menu_set_enabled(0);
+					return 0;  // Let menu.cpp process the file selection
 				default:
 					break;
 			}
+			break;
+			
+		case GFX_MODE_PREVIEW:
+			// Game preview mode - shows details, second A launches
+			switch (key)
+			{
+				case KEY_ENTER_LOCAL:
+					// A button: actually launch the game
+					// Disable graphical menu so old MiSTer OSD takes over after core loads
+					gfx_menu_set_enabled(0);
+					menu_state.mode = GFX_MODE_GAMES;
+					return 0;  // Let menu.cpp process the launch
+				case KEY_ESC_LOCAL:
+				case KEY_BACK_LOCAL:
+				case KEY_BACKSPACE_LOCAL:
+					// B button: go back to games grid
+					menu_state.mode = GFX_MODE_GAMES;
+					menu_state.needs_redraw = 1;
+					return 1;
+				case KEY_Y_LOCAL:
+					// Y button: toggle favorite
+					toggle_favorite();
+					return 1;
+				case KEY_TAB_LOCAL:
+				case KEY_GRAVE_LOCAL:
+					// Select/Tab button: open settings menu
+					settings_selected = 0;
+					settings_previous_mode = GFX_MODE_GAMES;  // Return to games, not preview
+					menu_state.mode = GFX_MODE_SETTINGS;
+					menu_state.needs_redraw = 1;
+					return 1;
+				default:
+					// Consume other keys
+					return 1;
+			}
+			break;
+			
+		case GFX_MODE_SETTINGS:
+			// Settings menu navigation
+			switch (key)
+			{
+				case KEY_UP_LOCAL:
+					settings_selected--;
+					if (settings_selected < 0) settings_selected = SETTINGS_COUNT - 1;
+					menu_state.needs_redraw = 1;
+					return 1;
+				case KEY_DOWN_LOCAL:
+					settings_selected++;
+					if (settings_selected >= SETTINGS_COUNT) settings_selected = 0;
+					menu_state.needs_redraw = 1;
+					return 1;
+				case KEY_LEFT_LOCAL:
+					// Left: cycle theme backward (only on theme row)
+					if (settings_selected == 0) {
+						current_theme_index--;
+						if (current_theme_index < 0) current_theme_index = THEME_COUNT - 1;
+						apply_theme(current_theme_index);
+					}
+					return 1;
+				case KEY_RIGHT_LOCAL:
+					// Right: cycle theme forward (only on theme row)
+					if (settings_selected == 0) {
+						current_theme_index++;
+						if (current_theme_index >= THEME_COUNT) current_theme_index = 0;
+						apply_theme(current_theme_index);
+					}
+					return 1;
+				case KEY_ENTER_LOCAL:
+					// A button: toggle setting or execute action
+					switch (settings_selected)
+					{
+						case 0: // Theme - cycle forward on A press too
+							current_theme_index++;
+							if (current_theme_index >= THEME_COUNT) current_theme_index = 0;
+							apply_theme(current_theme_index);
+							break;
+						case 1: // Boxart
+							cfg.boxart_enable = !cfg.boxart_enable;
+							break;
+						case 2: // Animations
+							cfg.anim_enable = !cfg.anim_enable;
+							break;
+						case 3: // Rescan Library
+							request_refresh();
+							menu_state.mode = settings_previous_mode;
+							break;
+						case 4: // Run Update All
+							run_script("/media/fat/Scripts/update_all.sh");
+							menu_state.mode = settings_previous_mode;
+							break;
+						case 5: // WiFi Setup
+							run_script("/media/fat/Scripts/wifi.sh");
+							menu_state.mode = settings_previous_mode;
+							break;
+						case 6: // Back
+							menu_state.mode = settings_previous_mode;
+							break;
+					}
+					menu_state.needs_redraw = 1;
+					return 1;
+				case KEY_ESC_LOCAL:
+				case KEY_BACK_LOCAL:
+				case KEY_BACKSPACE_LOCAL:
+				case KEY_TAB_LOCAL:
+				case KEY_GRAVE_LOCAL:
+					// B, Backspace, Tab, or Grave: close settings
+					menu_state.mode = settings_previous_mode;
+					menu_state.needs_redraw = 1;
+					return 1;
+				default:
+					// Consume all other keys to prevent background interaction
+					return 1;
+			}
+			break;
+			
+		default:
 			break;
 	}
 

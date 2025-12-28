@@ -36,6 +36,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <sys/statvfs.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <sched.h>
 #include <string.h>
 #include <sys/types.h>
@@ -70,6 +71,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "theme.h"
 #include "search.h"
 #include "scraper.h"
+#include "lib/imlib2/Imlib2.h"
 
 /*menu states*/
 enum MENU
@@ -418,8 +420,9 @@ void SelectFile(const char* path, const char* pFileExt, int Options, unsigned ch
 	else
 	{
 		// Default to games folder when in menu mode with graphical UI enabled
+		// Use _Games folder which contains MGL files for proper core launching
 		const char *home = is_menu() ? 
-			(cfg.gfx_menu_enable ? "/media/fat/games" : "Scripts") : 
+			(cfg.gfx_menu_enable ? "/media/fat/_Games" : "Scripts") : 
 			user_io_get_core_path(
 				(is_pce() && !strncasecmp(pFileExt, "CUE", 3)) ? PCECD_DIR :
 				(is_neogeo() && !strncasecmp(pFileExt, "CUE", 3)) ? NEOCD_DIR :
@@ -941,64 +944,57 @@ static void gfx_menu_sync_file_list(const char *title)
 	printf("GFX: gfx_menu_sync_file_list called, gfx_menu_is_enabled=%d\n", gfx_menu_is_enabled());
 	if (!gfx_menu_is_enabled()) return;
 
+	// Debug logger for boxart/core detection
+	FILE *dbg = fopen("/tmp/boxart_debug.log", "a");
+	auto log_debug = [&](const char *fmt, ...)
+	{
+		if (!dbg) return;
+		va_list ap;
+		va_start(ap, fmt);
+		vfprintf(dbg, fmt, ap);
+		va_end(ap);
+		fflush(dbg);
+	};
+
 	printf("GFX: Syncing file list, title='%s', selPath='%s'\n", title ? title : "NULL", selPath);
 	gfx_menu_clear_items();
 
-	// Determine if we're in systems view or games view based on path
-	// /media/fat/games = systems view (listing system folders)
-	// /media/fat/games/SNES = games view (listing games in a system)
-	// /media/fat/_Games = systems view
-	// /media/fat/_Games/_NES = games view
+	// Determine if we're in systems view or games view based on path.
+	// Handle both /media/fat/_Games and /media/usbX/_Games (or /games).
 	int depth = 0;
-	const char *games_path = "/media/fat/games";
-	const char *games2_path = "/media/fat/_Games";
-	
-	if (strncmp(selPath, games_path, strlen(games_path)) == 0)
+	const char *marker = strstr(selPath, "/_Games/");
+	if (!marker) marker = strstr(selPath, "/games/");
+
+	if (marker)
 	{
-		const char *after = selPath + strlen(games_path);
-		if (*after == '/') after++;
-		// Count slashes after base path to determine depth
+		const char *after = marker + strlen("/_Games/");
+		// Count components after marker
+		if (*after) depth++; // at least one component means games view
 		while (*after)
 		{
 			if (*after == '/') depth++;
 			after++;
-		}
-		// If there's content after games/, we're in a system folder
-		if (selPath[strlen(games_path)] != '\0' && selPath[strlen(games_path)] == '/')
-		{
-			depth++;
-		}
-	}
-	else if (strncmp(selPath, games2_path, strlen(games2_path)) == 0)
-	{
-		const char *after = selPath + strlen(games2_path);
-		if (*after == '/') after++;
-		while (*after)
-		{
-			if (*after == '/') depth++;
-			after++;
-		}
-		if (selPath[strlen(games2_path)] != '\0' && selPath[strlen(games2_path)] == '/')
-		{
-			depth++;
 		}
 	}
 
 	printf("GFX: Path depth = %d\n", depth);
+	log_debug("SYNC selPath=%s depth=%d title=%s\n", selPath, depth, title ? title : "");
+	
+	// Track system name for title display
+	char display_system_name[64] = "";
 	
 	if (depth >= 1)
 	{
 		// We're inside a system folder - games view
 		// Extract system name from path
 		char system_name[64] = "";
-		const char *start = NULL;
-		if (strncmp(selPath, games_path, strlen(games_path)) == 0)
-			start = selPath + strlen(games_path) + 1;
-		else if (strncmp(selPath, games2_path, strlen(games2_path)) == 0)
-			start = selPath + strlen(games2_path) + 1;
-		
-		if (start)
+		if (marker)
 		{
+			const char *start = marker + strlen("/_Games/");
+			// If this was the /games/ marker, adjust start accordingly
+			const char *tmp = strstr(selPath, "/games/");
+			if (tmp && tmp == marker) start = marker + strlen("/games/");
+
 			const char *end = strchr(start, '/');
 			if (end)
 				snprintf(system_name, sizeof(system_name), "%.*s", (int)(end - start), start);
@@ -1006,36 +1002,71 @@ static void gfx_menu_sync_file_list(const char *title)
 				strncpy(system_name, start, sizeof(system_name) - 1);
 		}
 		
-		printf("GFX: Games view - system='%s'\n", system_name);
-		gfx_menu_show_games(system_name);
+		// Remove underscore prefix for display (e.g., _NES -> NES)
+		const char *display_name = system_name;
+		if (display_name[0] == '_') display_name++;
+		strncpy(display_system_name, display_name, sizeof(display_system_name) - 1);
+		
+		printf("GFX: Games view - system='%s'\n", display_system_name);
+		log_debug("SYSTEM=%s raw=%s\n", display_system_name, system_name);
+		gfx_menu_show_games(display_system_name);
 	}
 	else
 	{
 		// We're at games root - systems view
 		printf("GFX: Systems view\n");
+		log_debug("SYSTEM_VIEW\n");
 		gfx_menu_show_systems();
 	}
 	
-	gfx_menu_set_title(title ? title : "");
+	// Don't override the title set by gfx_menu_show_games/gfx_menu_show_systems
+	// Only set title if we're not in games mode (e.g., cores browser)
+	if (depth == 0 && title && strcmp(title, "Cores") == 0)
+	{
+		gfx_menu_set_title("Systems");
+	}
 
 	// Extract system name from current browsing path for boxart lookups
 	// Path format: /media/fat/games/SNES or similar
-	char *current_path = HomeDir();
-	printf("GFX: HomeDir() = '%s'\n", current_path ? current_path : "NULL");
-	if (current_path)
+	// Use selPath (actual current path) instead of HomeDir (base path)
+	printf("GFX: selPath = '%s'\n", selPath);
+	
+	// Parse system name from selPath
+	// e.g., /media/fat/games/NES -> NES
+	// e.g., /media/fat/_Games/_NES -> _NES
+	const char *games_markers[] = {"/media/fat/games/", "/media/fat/_Games/", NULL};
+	const char *system_name = NULL;
+	
+	for (int m = 0; games_markers[m]; m++)
 	{
-		// Find the last directory component of the path
-		char *last_slash = strrchr(current_path, '/');
-		if (last_slash && last_slash[1])
+		if (strncmp(selPath, games_markers[m], strlen(games_markers[m])) == 0)
 		{
-			printf("GFX: Setting boxart core from path '%s' -> '%s'\n", current_path, last_slash + 1);
-			boxart_set_core(last_slash + 1);
+			system_name = selPath + strlen(games_markers[m]);
+			// Get just the first folder component
+			static char sys_buf[64];
+			const char *slash = strchr(system_name, '/');
+			if (slash)
+			{
+				snprintf(sys_buf, sizeof(sys_buf), "%.*s", (int)(slash - system_name), system_name);
+				system_name = sys_buf;
+			}
+			break;
 		}
-		else if (current_path[0])
-		{
-			printf("GFX: Setting boxart core to '%s'\n", current_path);
-			boxart_set_core(current_path);
-		}
+	}
+	
+	if (system_name && system_name[0])
+	{
+		// Remove underscore prefix if present (e.g., _NES -> NES)
+		if (system_name[0] == '_') system_name++;
+		printf("GFX: Setting boxart core to '%s'\n", system_name);
+		log_debug("SET_CORE %s from selPath=%s\n", system_name, selPath);
+		boxart_set_core(system_name);
+	}
+	else
+	{
+		printf("GFX: No system found in path, using fallback\n");
+		log_debug("SET_CORE fallback MENU selPath=%s\n", selPath);
+		boxart_set_core("MENU");
 	}
 
 	int count = flist_nDirEntries();
@@ -1062,22 +1093,57 @@ static void gfx_menu_sync_file_list(const char *title)
 		int idx = gfx_menu_add_item(item->altname, item->de.d_name, type);
 
 		// Load thumbnails for items near selection (lazy loading)
-		// Only load thumbnails within 10 items of selection for performance
-		if (type == GFX_ITEM_GAME && idx >= 0)
+		int distance = (i > selected) ? (i - selected) : (selected - i);
+		
+		if (type == GFX_ITEM_FOLDER && idx >= 0 && depth == 0)
 		{
-			int distance = (i > selected) ? (i - selected) : (selected - i);
+			// Systems view: try to load system icon
+			// Look in /media/fat/media/systems/ for PNG icons
+			char icon_path[512];
+			const char *folder_name = item->de.d_name;
+			
+			// Remove underscore prefix if present (e.g., _NES -> NES)
+			if (folder_name[0] == '_') folder_name++;
+			
+			// Try multiple locations for system icons
+			const char *icon_paths[] = {
+				"/media/fat/media/systems/%s.png",
+				"/media/fat/media/Systems/%s.png",
+				"/media/fat/System/%s.png",
+				NULL
+			};
+			
+			Imlib_Image icon = NULL;
+			for (int p = 0; icon_paths[p] && !icon; p++)
+			{
+				snprintf(icon_path, sizeof(icon_path), icon_paths[p], folder_name);
+				icon = imlib_load_image(icon_path);
+			}
+			
+			if (icon)
+			{
+				gfx_menu_set_item_thumbnail(idx, icon);
+			}
+		}
+		else if (type == GFX_ITEM_GAME && idx >= 0)
+		{
+			// Games view: load boxart
+			// Only load thumbnails within 10 items of selection for performance
 			if (distance <= 10)
 			{
-				printf("GFX: Trying to load thumbnail for '%s' (boxart_enable=%d)\n", item->de.d_name, cfg.boxart_enable);
+				printf("GFX: Loading boxart for '%s', core='%s'\n", item->de.d_name, boxart_get_core());
 				boxart_result_t result;
+				log_debug("LOAD_REQ name=%s core=%s sel=%d dist=%d\n", item->de.d_name, boxart_get_core(), selected, distance);
 				if (boxart_load_any(item->de.d_name, &result))
 				{
-					printf("GFX: SUCCESS - Loaded thumbnail for '%s' (size=%dx%d)\n", item->de.d_name, result.width, result.height);
+					printf("GFX: SUCCESS - Boxart loaded from '%s'\n", result.from_cache ? "cache" : "file");
+					log_debug("LOAD_OK name=%s\n", item->de.d_name);
 					gfx_menu_set_item_thumbnail(idx, result.image);
 				}
 				else
 				{
 					printf("GFX: FAILED - No boxart found for '%s'\n", item->de.d_name);
+					log_debug("LOAD_FAIL name=%s core=%s\n", item->de.d_name, boxart_get_core());
 				}
 			}
 		}
@@ -1085,6 +1151,7 @@ static void gfx_menu_sync_file_list(const char *title)
 
 	// Sync selection
 	gfx_menu_select_index(selected);
+	if (dbg) fclose(dbg);
 	gfx_menu_invalidate();
 }
 
@@ -1248,6 +1315,17 @@ void HandleUI(void)
 	int release = 0;
 	if (c & UPSTROKE) release = 1;
 
+	// Handle settings menu input - it takes priority over everything else
+	if (gfx_menu_is_enabled() && gfx_menu_get_mode() == GFX_MODE_SETTINGS && c && !release)
+	{
+		// Route input to settings menu handler
+		if (gfx_menu_handle_input(c & 0xFF))
+		{
+			// Input was consumed by settings menu, skip normal processing
+			return;
+		}
+	}
+
 	// decode and set events
 	menu = false;
 	back = false;
@@ -1405,7 +1483,17 @@ void HandleUI(void)
 			minus = true;
 			break;
 		case KEY_GRAVE:
-			recent = true;
+			// In graphical menu mode, Select button opens settings
+			// Otherwise, open recent menu
+			if (gfx_menu_is_enabled() && menu_use_graphical())
+			{
+				// Open settings mode in graphical menu
+				gfx_menu_set_mode(GFX_MODE_SETTINGS);
+			}
+			else
+			{
+				recent = true;
+			}
 			break;
 
 		// Graphical menu shortcuts (V key now unused - grid-only view)
