@@ -95,14 +95,16 @@ int main(int argc, char *argv[])
 		gfx_menu_set_enabled(1);
 		gfx_menu_set_view((gfx_view_type_t)cfg.gfx_menu_view);
 
-		// Load theme by name
+		// Load theme by name. theme_select_by_name() only sets selected_index;
+		// theme_apply_current() promotes it to active_theme_index and installs it,
+		// so theme_get_current() (which reads active_theme_index) returns the right one.
 		if (cfg.gfx_menu_theme[0])
 		{
 			theme_select_by_name(cfg.gfx_menu_theme);
+			theme_apply_current();
 			theme_entry_t *theme_entry = theme_get_current();
 			if (theme_entry)
 			{
-				gfx_menu_set_theme(&theme_entry->theme);
 				printf("Loaded theme: %s\n", theme_entry->meta.name);
 			}
 		}

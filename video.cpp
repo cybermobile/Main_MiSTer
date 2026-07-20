@@ -4600,8 +4600,19 @@ int video_boxart_render(Imlib_Image boxart_img, int x, int y, int max_width, int
 	if (!boxart_img || max_width <= 0 || max_height <= 0) return 0;
 	if (!fb_base || fb_width <= 0 || fb_height <= 0) return 0;
 
-	// Get current menu background buffer
+	// Get current menu background buffer.
+	// These wrap the framebuffer with a width/height fixed at creation time, so
+	// they must be recreated whenever the video mode (fb_width/fb_height) changes;
+	// otherwise the old width is used as the row stride and the blend is sheared.
 	static Imlib_Image bg1 = 0, bg2 = 0;
+	static int bg_w = 0, bg_h = 0;
+	if (bg_w != fb_width || bg_h != fb_height)
+	{
+		if (bg1) { imlib_context_set_image(bg1); imlib_free_image(); bg1 = 0; }
+		if (bg2) { imlib_context_set_image(bg2); imlib_free_image(); bg2 = 0; }
+		bg_w = fb_width;
+		bg_h = fb_height;
+	}
 	if (!bg1) bg1 = imlib_create_image_using_data(fb_width, fb_height, (uint32_t*)(fb_base + (FB_SIZE * 1)));
 	if (!bg2) bg2 = imlib_create_image_using_data(fb_width, fb_height, (uint32_t*)(fb_base + (FB_SIZE * 2)));
 

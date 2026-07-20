@@ -321,7 +321,9 @@ int boxart_exists(const char *game_name, artwork_type_t type)
 
 static int cache_lookup(const char *path)
 {
-	for (int i = 0; i < boxart_state.cache_count; i++)
+	// Iterate all slots, not just cache_count: eviction frees arbitrary
+	// (oldest-access) slots, so a loaded entry can live at an index >= cache_count.
+	for (int i = 0; i < BOXART_CACHE_SIZE; i++)
 	{
 		if (boxart_state.cache[i].loaded &&
 		    strcmp(boxart_state.cache[i].path, path) == 0)

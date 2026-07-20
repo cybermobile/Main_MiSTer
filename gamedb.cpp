@@ -95,9 +95,10 @@ int gamedb_load(const char *core_name)
 
 	for (int i = 0; extensions[i]; i++)
 	{
-		// Try /media/fat/gamedb/{core}.xml
-		snprintf(path, sizeof(path), "%s/gamedb/%s%s",
-			getRootDir(), db_state.core_name, extensions[i]);
+		// Try /media/fat/{gamedb_path}/{core}.xml (gamedb_path from MiSTer.ini, default "gamedb")
+		const char *gamedb_dir = (cfg.gamedb_path[0]) ? cfg.gamedb_path : "gamedb";
+		snprintf(path, sizeof(path), "%s/%s/%s%s",
+			getRootDir(), gamedb_dir, db_state.core_name, extensions[i]);
 
 		struct stat st;
 		if (stat(path, &st) == 0)

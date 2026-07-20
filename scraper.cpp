@@ -341,21 +341,52 @@ static void url_encode(const char *input, char *output, size_t output_size)
 	output[out_idx] = '\0';
 }
 
+// Escape a string for safe inclusion between single quotes in a shell command.
+// Each ' is rewritten as '\'' so the value cannot break out of its quoting.
+// The caller keeps the surrounding '%s' quotes in the format string.
+// This is required because interpolated values (ROM filenames, URLs from the
+// scraper API) routinely contain apostrophes -- e.g. "Rock 'n' Roll Racing" --
+// which would otherwise terminate the quoting and allow shell injection.
+static void shell_sq_escape(const char *in, char *out, size_t out_size)
+{
+	size_t o = 0;
+	if (!in) { if (out_size) out[0] = '\0'; return; }
+	for (size_t i = 0; in[i]; i++)
+	{
+		if (in[i] == '\'')
+		{
+			if (o + 4 >= out_size) break;
+			out[o++] = '\''; out[o++] = '\\'; out[o++] = '\''; out[o++] = '\'';
+		}
+		else
+		{
+			if (o + 1 >= out_size) break;
+			out[o++] = in[i];
+		}
+	}
+	out[o] = '\0';
+}
+
 // Download a file using curl
 static int download_file(const char *url, const char *output_path, const char *auth_header)
 {
-	char cmd[2048];
+	char cmd[4096];
+	char e_out[2048], e_url[2048], e_auth[1024];
 	int ret;
+
+	shell_sq_escape(output_path, e_out, sizeof(e_out));
+	shell_sq_escape(url, e_url, sizeof(e_url));
 
 	// Build curl command
 	if (auth_header && auth_header[0]) {
+		shell_sq_escape(auth_header, e_auth, sizeof(e_auth));
 		snprintf(cmd, sizeof(cmd),
 			"curl -sk -o '%s' -H '%s' '%s' 2>/dev/null",
-			output_path, auth_header, url);
+			e_out, e_auth, e_url);
 	} else {
 		snprintf(cmd, sizeof(cmd),
 			"curl -sk -o '%s' '%s' 2>/dev/null",
-			output_path, url);
+			e_out, e_url);
 	}
 
 	ret = system(cmd);
@@ -374,17 +405,21 @@ static int download_file(const char *url, const char *output_path, const char *a
 // Execute curl and capture output
 static int curl_get_json(const char *url, const char *auth_header, char *output, size_t output_size)
 {
-	char cmd[2048];
+	char cmd[4096];
+	char e_url[2048], e_auth[1024];
 	FILE *fp;
 
+	shell_sq_escape(url, e_url, sizeof(e_url));
+
 	if (auth_header && auth_header[0]) {
+		shell_sq_escape(auth_header, e_auth, sizeof(e_auth));
 		snprintf(cmd, sizeof(cmd),
 			"curl -sk -H '%s' '%s' 2>/dev/null",
-			auth_header, url);
+			e_auth, e_url);
 	} else {
 		snprintf(cmd, sizeof(cmd),
 			"curl -sk '%s' 2>/dev/null",
-			url);
+			e_url);
 	}
 
 	fp = popen(cmd, "r");
@@ -530,8 +565,10 @@ static int scrape_from_screenscraper(const char *game_name, const char *core_nam
 	snprintf(output_path, sizeof(output_path), "%s/%s.png", output_dir, clean_name);
 
 	// Create directory if needed
-	char mkdir_cmd[1024];
-	snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p '%s'", output_dir);
+	char mkdir_cmd[2048];
+	char e_dir[1600];
+	shell_sq_escape(output_dir, e_dir, sizeof(e_dir));
+	snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p '%s'", e_dir);
 	system(mkdir_cmd);
 
 	if (!download_file(box_url, output_path, NULL)) {
@@ -616,8 +653,10 @@ static int scrape_from_thegamesdb(const char *game_name, const char *core_name,
 	snprintf(output_path, sizeof(output_path), "%s/%s%s",
 		output_dir, clean_name, ext ? ext : ".jpg");
 
-	char mkdir_cmd[1024];
-	snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p '%s'", output_dir);
+	char mkdir_cmd[2048];
+	char e_dir[1600];
+	shell_sq_escape(output_dir, e_dir, sizeof(e_dir));
+	snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p '%s'", e_dir);
 	system(mkdir_cmd);
 
 	if (!download_file(image_url, output_path, NULL)) {
@@ -716,8 +755,10 @@ static int scrape_from_steamgriddb(const char *game_name, const char *core_name,
 	char output_path[1024];
 	snprintf(output_path, sizeof(output_path), "%s/%s%s", output_dir, clean_name, ext);
 
-	char mkdir_cmd[1024];
-	snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p '%s'", output_dir);
+	char mkdir_cmd[2048];
+	char e_dir[1600];
+	shell_sq_escape(output_dir, e_dir, sizeof(e_dir));
+	snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p '%s'", e_dir);
 	system(mkdir_cmd);
 
 	if (!download_file(image_url, output_path, NULL)) {

@@ -329,6 +329,12 @@ void anim_update(float delta_time)
 				{
 					anim->on_complete(anim->id, anim->user_data);
 				}
+
+				// Release the pool slot. Without this, finished-but-active
+				// animations are never reclaimed (callers only cancel while
+				// anim_is_running()), so the fixed pool exhausts after enough
+				// completed animations and anim_create() starts failing.
+				anim->active = 0;
 			}
 		}
 	}
