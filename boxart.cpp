@@ -551,14 +551,22 @@ void boxart_set_preview(const char *game_name)
 	boxart_result_t result;
 	if (boxart_load_any(game_name, &result))
 	{
-		boxart_state.current_preview = result.image;
+		// Own a private clone. result.image belongs to the cache and can be
+		// evicted/freed independently; boxart_get_preview_image() is used in the
+		// render path, so a borrowed pointer would use-after-free after eviction.
+		imlib_context_set_image(result.image);
+		boxart_state.current_preview = imlib_clone_image();
 	}
 }
 
 void boxart_clear_preview(void)
 {
-	// Don't free - it's in the cache
-	boxart_state.current_preview = NULL;
+	if (boxart_state.current_preview)
+	{
+		imlib_context_set_image(boxart_state.current_preview);
+		imlib_free_image();
+		boxart_state.current_preview = NULL;
+	}
 }
 
 int boxart_render_preview(int x, int y, int max_width, int max_height)

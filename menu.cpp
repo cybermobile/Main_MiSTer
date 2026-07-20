@@ -1096,11 +1096,32 @@ void gfx_menu_sync_from_classic(void)
 		gfx_menu_invalidate();  // Trigger redraw when selection changes
 	}
 
-	// Update boxart preview for current selection
+	// Update boxart preview for current selection.
+	// This runs every main-loop iteration, but boxart_set_preview() does path
+	// building, ~dozens of stat() calls, and (on a miss) enqueues an auto-scrape.
+	// Only refresh when the selection actually changed, otherwise a single
+	// stationary selection triggers a per-frame stat storm and floods the
+	// auto-scrape queue with duplicates of the same title.
+	static int last_preview_sel = -1;
+	static char last_preview_name[256] = {0};
 	direntext_t *item = flist_SelectedItem();
 	if (item && item->de.d_type != DT_DIR)
 	{
-		boxart_set_preview(item->de.d_name);
+		if (selected != last_preview_sel ||
+		    strncmp(last_preview_name, item->de.d_name, sizeof(last_preview_name) - 1) != 0)
+		{
+			boxart_set_preview(item->de.d_name);
+			last_preview_sel = selected;
+			strncpy(last_preview_name, item->de.d_name, sizeof(last_preview_name) - 1);
+			last_preview_name[sizeof(last_preview_name) - 1] = '\0';
+		}
+	}
+	else if (last_preview_sel != -1 || last_preview_name[0])
+	{
+		// Selection moved onto a directory or empty entry: clear the preview once.
+		boxart_clear_preview();
+		last_preview_sel = -1;
+		last_preview_name[0] = '\0';
 	}
 }
 

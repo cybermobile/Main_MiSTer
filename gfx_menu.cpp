@@ -395,7 +395,10 @@ void gfx_menu_clear_items(void)
 	{
 		if (items_storage[i].thumbnail)
 		{
-			// Don't free - thumbnails come from boxart cache
+			// Each item owns a private clone (see gfx_menu_set_item_thumbnail),
+			// so free it here rather than leaving it dangling.
+			imlib_context_set_image(items_storage[i].thumbnail);
+			imlib_free_image();
 			items_storage[i].thumbnail = NULL;
 		}
 	}
@@ -434,11 +437,28 @@ int gfx_menu_add_item(const char *name, const char *path, gfx_item_type_t type)
 
 void gfx_menu_set_item_thumbnail(int index, Imlib_Image thumbnail)
 {
-	if (index >= 0 && index < menu_state.item_count)
+	if (index < 0 || index >= menu_state.item_count) return;
+
+	gfx_menu_item_t *item = &items_storage[index];
+
+	// Free any previously-owned clone before replacing it.
+	if (item->thumbnail)
 	{
-		items_storage[index].thumbnail = thumbnail;
-		menu_state.needs_redraw = 1;
+		imlib_context_set_image(item->thumbnail);
+		imlib_free_image();
+		item->thumbnail = NULL;
 	}
+
+	// Own a private clone. The source handle belongs to the boxart cache, which
+	// may evict and free it at any time; without a clone the item would be left
+	// pointing at freed memory and the render path would use-after-free.
+	if (thumbnail)
+	{
+		imlib_context_set_image(thumbnail);
+		item->thumbnail = imlib_clone_image();
+	}
+
+	menu_state.needs_redraw = 1;
 }
 
 void gfx_menu_set_item_description(int index, const char *description)
