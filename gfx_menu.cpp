@@ -26,6 +26,7 @@
 #include "gamedb.h"
 #include "menu.h"
 #include "zaparoo.h"
+#include "frame_timer.h"
 
 // Maximum items in menu
 #define GFX_MAX_ITEMS 1024
@@ -71,6 +72,34 @@ extern int fb_height;
 #define GFX_FB_A 1
 #define GFX_FB_B 2
 static int gfx_fb_front = GFX_FB_A;
+
+// Deferred, vsync-aligned buffer swap.
+// video_fb_enable() reprograms the scaler base address immediately, so flipping
+// mid-scanout tears. Instead co_ui renders into the back buffer and marks a swap
+// pending; the swap (base-address change) is issued from gfx_menu_vsync_swap(),
+// registered as a frame callback that fires from frame_timer() (co_poll) right
+// after the vsync frame counter advances -- i.e. near a fresh frame boundary.
+// gfx_swap_deadline is a wall-clock safety net: if the frame counter isn't
+// advancing (core exposes none and the fallback timer hasn't started), co_ui
+// performs the swap itself so the menu can never freeze.
+static volatile int gfx_swap_pending = 0;
+static int gfx_swap_buffer = GFX_FB_A;
+static unsigned long gfx_swap_deadline = 0;
+
+static void gfx_swap_now(void)
+{
+	video_fb_enable(1, gfx_swap_buffer);
+	gfx_fb_front = gfx_swap_buffer;
+	gfx_swap_pending = 0;
+}
+
+// Frame callback: runs in co_poll just after the vsync counter ticks.
+static void gfx_menu_vsync_swap(void)
+{
+	if (!gfx_swap_pending) return;
+	if (!menu_state.enabled || !gfx_menu_is_enabled()) { gfx_swap_pending = 0; return; }
+	gfx_swap_now();
+}
 
 static void gfx_console_set_graphics_mode(int enable)
 {
@@ -274,6 +303,10 @@ void gfx_menu_init(void)
 
 	init_default_theme();
 	menu_state.theme = &default_theme;
+
+	// Issue the framebuffer swap from a vsync-aligned frame callback (co_poll)
+	// to avoid tearing from mid-scanout base-address changes. See gfx_swap_*.
+	add_frame_callback(gfx_menu_vsync_swap);
 
 	printf("GFX Menu initialized\n");
 }
@@ -2208,7 +2241,10 @@ void gfx_menu_render(void)
 	// (e.g., when in System Settings, OSD should be visible)
 	if (!menu_use_graphical())
 	{
-		// Let OSD show instead - disable our framebuffer
+		// Let OSD show instead - disable our framebuffer.
+		// Drop any deferred swap so the vsync callback doesn't flip the display
+		// back onto our buffer and fight the OSD.
+		gfx_swap_pending = 0;
 		video_fb_enable(0, 0);
 		return;
 	}
@@ -2221,6 +2257,14 @@ void gfx_menu_render(void)
 
 	// Frame rate limiter: max ~30fps (33ms between frames) to reduce CPU load
 	unsigned long now = GetTimer(0);
+
+	// Safety net: if a deferred swap is overdue (the vsync callback isn't firing
+	// because no frame counter is advancing), perform it here so the UI can't
+	// stall waiting for a flip that never comes.
+	if (gfx_swap_pending && (long)(now - gfx_swap_deadline) >= 0) {
+		gfx_swap_now();
+	}
+
 	if (now - last_render_time < 33 && !menu_state.needs_redraw) {
 		// Just keep current buffer displayed, skip expensive work
 		video_fb_enable(1, gfx_fb_front);
@@ -2314,10 +2358,15 @@ void gfx_menu_render(void)
 		}
 
 		menu_state.needs_redraw = 0;
-		
-		// Swap buffers
-		video_fb_enable(1, back);
-		gfx_fb_front = back;
+
+		// Defer the swap to the next vsync (see gfx_menu_vsync_swap). Keep the
+		// current front buffer on screen until the frame callback flips to this
+		// freshly rendered back buffer near a frame boundary, avoiding a
+		// mid-scanout base-address change (tearing).
+		gfx_swap_buffer = back;
+		gfx_swap_deadline = now + 50;  // wall-clock safety net (~1-3 frames)
+		gfx_swap_pending = 1;
+		video_fb_enable(1, gfx_fb_front);
 	}
 	else
 	{
