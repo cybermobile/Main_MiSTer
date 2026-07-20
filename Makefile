@@ -38,7 +38,7 @@ C_SRC =   $(wildcard *.c) \
           $(wildcard ./lib/libchdr/*.c) \
           lib/libco/arm.c
 
-CPP_SRC = $(wildcard *.cpp) \
+CPP_SRC = $(filter-out test_ui_preview.cpp,$(wildcard *.cpp)) \
           $(wildcard ./lib/serial_server/library/*.cpp) \
           $(wildcard ./support/*/*.cpp)
 

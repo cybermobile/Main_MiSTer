@@ -83,6 +83,12 @@ void search_end(void)
 	keyboard_state.visible = 0;
 }
 
+void search_toggle(void)
+{
+	if (search_state.active) search_end();
+	else search_start();
+}
+
 int search_is_active(void)
 {
 	return search_state.active;

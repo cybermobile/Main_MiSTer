@@ -85,6 +85,9 @@ void search_start(void);
 // End search mode
 void search_end(void);
 
+// Toggle search mode on/off
+void search_toggle(void);
+
 // Check if search is active
 int search_is_active(void);
 
