@@ -9,6 +9,8 @@
 
 // Apple 2 support
 #include "support/a2/dsk2nib_lib.h"
+// Apple IIgs disk integration
+#include "support/a2/iigs_disk.h"
 
 // Archie support
 #include "support/archie/archie.h"
@@ -21,6 +23,9 @@
 
 // SNES  support
 #include "support/snes/snes.h"
+
+// MegaDrive  support
+#include "support/megadrive/mdplus.h"
 
 // N64  support
 #include "support/n64/n64.h"
@@ -40,6 +45,10 @@
 // C64 support
 #include "support/c64/c64.h"
 
+// Atari 8bit support
+#include "support/atari8bit/atari800.h"
+#include "support/atari8bit/atari5200.h"
+
 // PCECD  support
 #include "support/pcecd/pcecd.h"
 
@@ -58,3 +67,6 @@
 // N64 support
 #include "support/n64/n64.h"
 #include "support/n64/n64_joy_emu.h"
+
+// 3DO  support
+#include "support/3do/3do.h"
