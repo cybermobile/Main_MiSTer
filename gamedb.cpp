@@ -365,6 +365,20 @@ gamedb_entry_t* gamedb_lookup_filename(const char *filename)
 {
 	if (!filename || !db_state.loaded) return NULL;
 
+	// Memoize the most recent lookup. This is called from the render path once
+	// per redraw for the selected item; during scroll animations the selection
+	// (and thus filename) is fixed, so without this a large database is fully
+	// rescanned every frame. The memo is invalidated when the loaded core
+	// changes (a DB reload rewrites entries_storage and changes core_name).
+	static char memo_core[64] = {0};
+	static char memo_name[GAMEDB_PATH_MAX] = {0};
+	static int  memo_index = -1;
+	if (strncmp(memo_core, db_state.core_name, sizeof(memo_core)) == 0 &&
+	    strncmp(memo_name, filename, sizeof(memo_name)) == 0)
+	{
+		return (memo_index >= 0) ? &entries_storage[memo_index] : NULL;
+	}
+
 	int best_score = 0;
 	int best_index = -1;
 
@@ -387,12 +401,16 @@ gamedb_entry_t* gamedb_lookup_filename(const char *filename)
 	}
 
 	// Require minimum score threshold
-	if (best_score >= 500 && best_index >= 0)
-	{
-		return &entries_storage[best_index];
-	}
+	int result_index = (best_score >= 500 && best_index >= 0) ? best_index : -1;
 
-	return NULL;
+	// Store memo for the next redraw of the same selection.
+	strncpy(memo_core, db_state.core_name, sizeof(memo_core) - 1);
+	memo_core[sizeof(memo_core) - 1] = '\0';
+	strncpy(memo_name, filename, sizeof(memo_name) - 1);
+	memo_name[sizeof(memo_name) - 1] = '\0';
+	memo_index = result_index;
+
+	return (result_index >= 0) ? &entries_storage[result_index] : NULL;
 }
 
 gamedb_entry_t* gamedb_lookup_crc32(uint32_t crc32)
